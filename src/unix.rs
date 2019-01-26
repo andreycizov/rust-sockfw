@@ -1,14 +1,10 @@
 use std::io::{Error, ErrorKind, Write, Read};
 use std::os::unix::net::UnixStream;
 
-use crate::{FwError, MidChan, Chan, Connector, Transition, Pollable};
+use crate::{FwError, MidChan, Chan, Connector, NextState, Pollable};
 use mio::unix::EventedFd;
 use std::os::unix::io::AsRawFd;
-use mio::Token;
-use mio::Poll;
-use mio::Ready;
-use mio::PollOpt;
-
+use mio::{Token, Poll, Ready, PollOpt};
 type UnixErr = Error;
 
 pub struct UnixChan {
@@ -31,8 +27,8 @@ impl MidChan for UnixChan {
     type Err = UnixErr;
     type C = UnixChan;
 
-    fn try_channel(self) -> Result<Transition<Self::Err, Self::C, Self>, FwError<Self::Err>> {
-        return Ok(Transition::Ok(self));
+    fn try_channel(self) -> Result<NextState<Self::Err, Self::C, Self>, FwError<Self::Err>> {
+        return Ok(NextState::Active(self));
     }
 }
 
@@ -72,10 +68,10 @@ impl Connector for UnixConnector {
     type C = UnixChan;
     type PC = UnixChan;
 
-    fn connect(&mut self) -> Result<Self::PC, FwError<Self::Err>> {
+    fn connect(&mut self) -> Result<NextState<Self::Err, Self::C, Self::PC>, FwError<Self::Err>> {
         let conn = UnixStream::connect(&self.addr)?;
         conn.set_nonblocking(true)?;
 
-        return Ok(UnixChan { addr: None, stream: conn });
+        return Ok(NextState::Pending(UnixChan { addr: None, stream: conn }));
     }
 }

@@ -74,17 +74,12 @@ pub trait Pollable {
     fn deregister(&self, poll: &Poll) -> Result<(), IOError>;
 }
 
-pub enum Transition<Err: Debug, C: Chan<Err=Err>, PC: MidChan<Err=Err, C=C>> {
-    Ok(C),
-    Stay(PC),
-}
-
 /// This channel is still initializing
 pub trait MidChan {
     type Err: Debug;
     type C: Chan<Err=Self::Err>;
 
-    fn try_channel(self) -> Result<Transition<Self::Err, Self::C, Self>, FwError<Self::Err>>
+    fn try_channel(self) -> Result<NextState<Self::Err, Self::C, Self>, FwError<Self::Err>>
         where Self: std::marker::Sized;
 }
 
@@ -93,7 +88,7 @@ pub trait Listener {
     type C: Chan<Err=Self::Err>;
     type PC: MidChan<Err=Self::Err, C=Self::C>;
     /// accept a single connection and return it
-    fn accept(&mut self) -> Result<Option<Self::PC>, FwError<Self::Err>>;
+    fn accept(&mut self) -> Result<Option<NextState<Self::Err, Self::C, Self::PC>>, FwError<Self::Err>>;
 }
 
 pub trait Connector {
@@ -101,7 +96,17 @@ pub trait Connector {
     type C: Chan<Err=Self::Err>;
     type PC: MidChan<C=Self::C, Err=Self::Err>;
     /// create a single connection and return it
-    fn connect(&mut self) -> Result<Self::PC, FwError<Self::Err>>;
+    fn connect(&mut self) -> Result<NextState<Self::Err, Self::C, Self::PC>, FwError<Self::Err>>;
+}
+
+#[derive(Debug)]
+pub enum NextState<
+    E: Debug,
+    A: Chan<Err=E>,
+    B: MidChan<Err=E, C=A>
+> {
+    Pending(B),
+    Active(A),
 }
 
 #[derive(Debug)]
@@ -133,6 +138,16 @@ State<E, A, B> {
         match self {
             State::Active(x) => x,
             _=> unreachable!("must never happen"),
+        }
+    }
+}
+
+impl<E: Debug, A: Chan<Err=E> + Pollable, B: MidChan<Err=E, C=A> + Pollable>
+From<NextState<E, A, B>> for State<E, A, B> {
+    fn from(x: NextState<E, A, B>) -> State<E, A, B> {
+        match x {
+            NextState::Active(x) => State::Active(x),
+            NextState::Pending(x) => State::Pending(x),
         }
     }
 }
@@ -283,11 +298,11 @@ Fw<Le, Lc, Lp, Se, Sc, Sp, LL, SS> {
         match prev {
             State::Pending(x) => {
                 match x.try_channel()? {
-                    Transition::Stay(x) => {
+                    NextState::Pending(x) => {
                         *st = State::Pending(x);
                         return Ok(false);
                     }
-                    Transition::Ok(x) => {
+                    NextState::Active(x) => {
                         *st = State::Active(x);
                         return Ok(true);
                     }
@@ -307,8 +322,8 @@ Fw<Le, Lc, Lp, Se, Sc, Sp, LL, SS> {
             let chan_s = self.connector.connect().map_err(FwPairError::ms)?;
             let (conn_id, tok_a, tok_b) = self.create_conn_idents();
 
-            let ca = State::Pending(chan_l);
-            let cb = State::Pending(chan_s);
+            let ca: State<_, _, _> = chan_l.into();
+            let cb: State<_, _, _> = chan_s.into();
 
             ca.register(&self.poll, tok_a).map_err(|x| FwPairError::L(FwError::Register(x)))?;
             cb.register(&self.poll, tok_b).map_err(|x| FwPairError::S(FwError::Register(x)))?;

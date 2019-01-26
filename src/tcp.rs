@@ -1,7 +1,7 @@
 use mio::tcp::TcpListener as MioTcpListener;
 use std::io::{Error, ErrorKind};
 use mio::tcp::TcpStream;
-use crate::{Listener, MidChan, Chan, FwError, Transition, Pollable};
+use crate::{Listener, MidChan, Chan, FwError, NextState, Pollable};
 use std::io::{Read, Write};
 use std::net::SocketAddr;
 use mio::{Poll, Token, Ready, PollOpt};
@@ -29,8 +29,8 @@ impl MidChan for TcpChan {
     type Err = TcpErr;
     type C = TcpChan;
 
-    fn try_channel(self) -> Result<Transition<Self::Err, Self::C, Self>, FwError<Self::Err>> {
-        return Ok(Transition::Ok(TcpChan { addr: self.addr, stream: self.stream }));
+    fn try_channel(self) -> Result<NextState<Self::Err, Self::C, Self>, FwError<Self::Err>> {
+        return Ok(NextState::Active(TcpChan { addr: self.addr, stream: self.stream }));
     }
 }
 
@@ -82,7 +82,7 @@ impl Listener for TcpListener {
     type C = TcpChan;
     type PC = TcpChan;
 
-    fn accept(&mut self) -> Result<Option<Self::PC>, FwError<Self::Err>> {
+    fn accept(&mut self) -> Result<Option<NextState<Self::Err, Self::C, Self::PC>>, FwError<Self::Err>> {
         if let Some((sock, addr)) = {
             match self.listener.accept() {
                 Err(x) => match x.kind() {
@@ -99,10 +99,10 @@ impl Listener for TcpListener {
 
             return Ok(
                 Some(
-                    TcpChan {
+                    NextState::Pending(TcpChan {
                         addr: addr.to_string(),
                         stream: sock,
-                    }
+                    })
                 )
             );
         } else {
