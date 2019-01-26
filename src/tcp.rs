@@ -1,7 +1,7 @@
 use mio::tcp::TcpListener as MioTcpListener;
 use std::io::{Error, ErrorKind};
 use mio::tcp::TcpStream;
-use crate::{Listener, PendingChannel, Channel, FwError, Transition, Pollable};
+use crate::{Listener, MidChan, Chan, FwError, Transition, Pollable};
 use std::io::{Read, Write};
 use std::net::SocketAddr;
 use mio::{Poll, Token, Ready, PollOpt};
@@ -25,7 +25,7 @@ impl Pollable for TcpChan {
 }
 
 
-impl PendingChannel for TcpChan {
+impl MidChan for TcpChan {
     type Err = TcpErr;
     type C = TcpChan;
 
@@ -34,7 +34,7 @@ impl PendingChannel for TcpChan {
     }
 }
 
-impl Channel for TcpChan {
+impl Chan for TcpChan {
     type Err = TcpErr;
     fn send(&mut self, buff: &[u8]) -> Result<usize, FwError<Self::Err>> {
         Ok(self.stream.write(buff)?)

@@ -62,7 +62,7 @@ impl<Le: Debug, Se: Debug> FwPairError<Le, Se> {
     }
 }
 
-pub trait Channel {
+pub trait Chan {
     type Err: Debug;
     fn send(&mut self, buff: &[u8]) -> Result<usize, FwError<Self::Err>>;
     fn recv(&mut self, buff: &mut [u8]) -> Result<Option<usize>, FwError<Self::Err>>;
@@ -74,15 +74,15 @@ pub trait Pollable {
     fn deregister(&self, poll: &Poll) -> Result<(), IOError>;
 }
 
-pub enum Transition<Err: Debug, C: Channel<Err=Err>, PC: PendingChannel<Err=Err, C=C>> {
+pub enum Transition<Err: Debug, C: Chan<Err=Err>, PC: MidChan<Err=Err, C=C>> {
     Ok(C),
     Stay(PC),
 }
 
 /// This channel is still initializing
-pub trait PendingChannel {
+pub trait MidChan {
     type Err: Debug;
-    type C: Channel<Err=Self::Err>;
+    type C: Chan<Err=Self::Err>;
 
     fn try_channel(self) -> Result<Transition<Self::Err, Self::C, Self>, FwError<Self::Err>>
         where Self: std::marker::Sized;
@@ -90,16 +90,16 @@ pub trait PendingChannel {
 
 pub trait Listener {
     type Err: Debug;
-    type C: Channel<Err=Self::Err>;
-    type PC: PendingChannel<Err=Self::Err, C=Self::C>;
+    type C: Chan<Err=Self::Err>;
+    type PC: MidChan<Err=Self::Err, C=Self::C>;
     /// accept a single connection and return it
     fn accept(&mut self) -> Result<Option<Self::PC>, FwError<Self::Err>>;
 }
 
 pub trait Connector {
     type Err: Debug;
-    type C: Channel<Err=Self::Err>;
-    type PC: PendingChannel<C=Self::C, Err=Self::Err>;
+    type C: Chan<Err=Self::Err>;
+    type PC: MidChan<C=Self::C, Err=Self::Err>;
     /// create a single connection and return it
     fn connect(&mut self) -> Result<Self::PC, FwError<Self::Err>>;
 }
@@ -107,8 +107,8 @@ pub trait Connector {
 #[derive(Debug)]
 pub enum State<
     E: Debug,
-    A: Channel<Err=E> + Pollable,
-    B: PendingChannel<Err=E, C=A> + Pollable
+    A: Chan<Err=E> + Pollable,
+    B: MidChan<Err=E, C=A> + Pollable
 > {
     Pending(B),
     Active(A),
@@ -117,8 +117,8 @@ pub enum State<
 
 impl<
     E: Debug,
-    A: Channel<Err=E> + Pollable,
-    B: PendingChannel<Err=E, C=A> + Pollable
+    A: Chan<Err=E> + Pollable,
+    B: MidChan<Err=E, C=A> + Pollable
 >
 State<E, A, B> {
     pub fn is_active(&self) -> bool {
@@ -129,7 +129,7 @@ State<E, A, B> {
         }
     }
 
-    pub fn chan(&mut self) -> &mut impl Channel<Err=E> {
+    pub fn chan(&mut self) -> &mut impl Chan<Err=E> {
         match self {
             State::Active(x) => x,
             _=> unreachable!("must never happen"),
@@ -140,8 +140,8 @@ State<E, A, B> {
 
 impl<
     E: Debug,
-    A: Channel<Err=E> + Pollable,
-    B: PendingChannel<Err=E, C=A> + Pollable
+    A: Chan<Err=E> + Pollable,
+    B: MidChan<Err=E, C=A> + Pollable
 >
 Pollable for
 State<E, A, B> {
@@ -165,11 +165,11 @@ State<E, A, B> {
 #[derive(Debug)]
 struct Pair<
     Le: Debug,
-    Lc: Channel<Err=Le> + Pollable,
-    Lp: PendingChannel<C=Lc, Err=Le> + Pollable,
+    Lc: Chan<Err=Le> + Pollable,
+    Lp: MidChan<C=Lc, Err=Le> + Pollable,
     Se: Debug,
-    Sc: Channel<Err=Se> + Pollable,
-    Sp: PendingChannel<C=Sc, Err=Se> + Pollable
+    Sc: Chan<Err=Se> + Pollable,
+    Sp: MidChan<C=Sc, Err=Se> + Pollable
 > {
     conn_id: usize,
     ca: State<Le, Lc, Lp>,
@@ -184,11 +184,11 @@ struct Pair<
 impl
 <
     Le: Debug,
-    Lc: Channel<Err=Le> + Pollable,
-    Lp: PendingChannel<C=Lc, Err=Le> + Pollable,
+    Lc: Chan<Err=Le> + Pollable,
+    Lp: MidChan<C=Lc, Err=Le> + Pollable,
     Se: Debug,
-    Sc: Channel<Err=Se> + Pollable,
-    Sp: PendingChannel<C=Sc, Err=Se> + Pollable
+    Sc: Chan<Err=Se> + Pollable,
+    Sp: MidChan<C=Sc, Err=Se> + Pollable
 >
 Pair<Le, Lc, Lp, Se, Sc, Sp> {
     pub fn actives(&self) -> usize {
@@ -207,8 +207,8 @@ Pair<Le, Lc, Lp, Se, Sc, Sp> {
 }
 
 pub struct Fw<
-    Le: Debug, Lc: Channel<Err=Le> + Pollable, Lp: PendingChannel<C=Lc, Err=Le> + Pollable,
-    Se: Debug, Sc: Channel<Err=Se> + Pollable, Sp: PendingChannel<C=Sc, Err=Se> + Pollable,
+    Le: Debug, Lc: Chan<Err=Le> + Pollable, Lp: MidChan<C=Lc, Err=Le> + Pollable,
+    Se: Debug, Sc: Chan<Err=Se> + Pollable, Sp: MidChan<C=Sc, Err=Se> + Pollable,
     LL: Listener<C=Lc, PC=Lp, Err=Le> + Pollable,
     SS: Connector<C=Sc, PC=Sp, Err=Se>,
 >
@@ -225,8 +225,8 @@ pub struct Fw<
 
 impl
 <
-    Le: Debug, Lc: Channel<Err=Le> + Pollable, Lp: PendingChannel<C=Lc, Err=Le> + Pollable,
-    Se: Debug, Sc: Channel<Err=Se> + Pollable, Sp: PendingChannel<C=Sc, Err=Se> + Pollable,
+    Le: Debug, Lc: Chan<Err=Le> + Pollable, Lp: MidChan<C=Lc, Err=Le> + Pollable,
+    Se: Debug, Sc: Chan<Err=Se> + Pollable, Sp: MidChan<C=Sc, Err=Se> + Pollable,
     LL: Listener<C=Lc, PC=Lp, Err=Le> + Pollable,
     SS: Connector<C=Sc, PC=Sp, Err=Se>,
 >
@@ -273,8 +273,8 @@ Fw<Le, Lc, Lp, Se, Sc, Sp, LL, SS> {
     }
 
     fn try_proceed<
-        E: Debug, A: Channel<Err=E> + Pollable,
-        B: PendingChannel<Err=E, C=A> + Pollable
+        E: Debug, A: Chan<Err=E> + Pollable,
+        B: MidChan<Err=E, C=A> + Pollable
     >(st: &mut State<E, A, B>) -> Result<bool, FwError<E>> {
         let mut prev = State::Swapping;
 
@@ -347,7 +347,7 @@ Fw<Le, Lc, Lp, Se, Sc, Sp, LL, SS> {
         Ok(())
     }
 
-    fn handle_once <Re: Debug, We: Debug, R: Channel<Err=Re>, W: Channel<Err=We>>
+    fn handle_once <Re: Debug, We: Debug, R: Chan<Err=Re>, W: Chan<Err=We>>
     (buff: &mut [u8], chan_a: &mut R, chan_b: &mut W) -> Result<Option<usize>, FwPairError<Re, We>> {
         let read = chan_a.recv(buff).map_err(FwPairError::ml)?;
 
@@ -364,7 +364,7 @@ Fw<Le, Lc, Lp, Se, Sc, Sp, LL, SS> {
         Ok(read)
     }
 
-    fn handle_rw <Re: Debug, We: Debug, R: Channel<Err=Re>, W: Channel<Err=We>>
+    fn handle_rw <Re: Debug, We: Debug, R: Chan<Err=Re>, W: Chan<Err=We>>
     (buff: &mut [u8], chan_a: &mut R, chan_b: &mut W) -> Result<Option<usize>, FwPairError<Re, We>> {
         let mut total = 0;
         while let Some(x) = Self::handle_once(buff, chan_a, chan_b)? {

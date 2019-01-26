@@ -1,7 +1,7 @@
 use std::io::{Error, ErrorKind, Write, Read};
 use std::os::unix::net::UnixStream;
 
-use crate::{FwError, PendingChannel, Channel, Connector, Transition, Pollable};
+use crate::{FwError, MidChan, Chan, Connector, Transition, Pollable};
 use mio::unix::EventedFd;
 use std::os::unix::io::AsRawFd;
 use mio::Token;
@@ -27,7 +27,7 @@ impl Pollable for UnixChan {
     }
 }
 
-impl PendingChannel for UnixChan {
+impl MidChan for UnixChan {
     type Err = UnixErr;
     type C = UnixChan;
 
@@ -36,7 +36,7 @@ impl PendingChannel for UnixChan {
     }
 }
 
-impl Channel for UnixChan {
+impl Chan for UnixChan {
     type Err = UnixErr;
     fn send(&mut self, buff: &[u8]) -> Result<usize, FwError<Self::Err>> {
         Ok(self.stream.write(buff)?)
