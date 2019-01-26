@@ -1,25 +1,37 @@
 use std::io::{Error, ErrorKind, Write, Read};
 use std::os::unix::net::UnixStream;
 
-use crate::{FwError, PendingChannel, Channel, Connector, Transition};
+use crate::{FwError, PendingChannel, Channel, Connector, Transition, Pollable};
+use mio::unix::EventedFd;
+use std::os::unix::io::AsRawFd;
+use std::marker::PhantomData;
 
 type UnixErr = Error;
 
-struct UnixChan {
+pub struct UnixChan<'a> {
     addr: Option<String>,
     stream: UnixStream,
+    phantom: PhantomData<&'a UnixStream>
 }
 
-impl PendingChannel for UnixChan {
-    type Err = UnixErr;
-    type C = UnixChan;
+impl <'a>Pollable<'a> for UnixChan<'a> {
+    type E = EventedFd<'a>;
 
-    fn try_channel(self) -> Result<Transition<Self::Err, Self::C, Self>, FwError<Self::Err>> {
-        return Ok(Transition::Ok(UnixChan { addr: self.addr, stream: self.stream }));
+    fn pollable(&'a self) -> &'a Self::E {
+        &EventedFd(&self.stream.as_raw_fd())
     }
 }
 
-impl Channel for UnixChan {
+impl <'a>PendingChannel<'a> for UnixChan<'a> {
+    type Err = UnixErr;
+    type C = UnixChan<'a>;
+
+    fn try_channel(self) -> Result<Transition<'a, Self::Err, Self::C, Self>, FwError<Self::Err>> {
+        return Ok(Transition::Ok(self));
+    }
+}
+
+impl <'a>Channel<'a> for UnixChan<'a> {
     type Err = UnixErr;
     fn send(&mut self, buff: &mut [u8]) -> Result<usize, FwError<Self::Err>> {
         Ok(self.stream.write(buff)?)
@@ -40,19 +52,25 @@ impl Channel for UnixChan {
     }
 }
 
-struct UnixConnector {
+pub struct UnixConnector {
     addr: String
 }
 
-impl Connector for UnixConnector {
-    type Err = UnixErr;
-    type C = UnixChan;
-    type PC = UnixChan;
+impl UnixConnector {
+    pub fn new(addr: &str) -> Self {
+        UnixConnector { addr: addr.to_string() }
+    }
+}
 
-    fn connect(&mut self) -> Result<Self::PC, FwError<Self::Err>> {
+impl <'a>Connector<'a> for UnixConnector {
+    type Err = UnixErr;
+    type C = UnixChan<'a>;
+    type PC = UnixChan<'a>;
+
+    fn connect<'b>(&'b mut self) -> Result<Self::PC, FwError<Self::Err>> {
         let conn = UnixStream::connect(&self.addr)?;
         conn.set_nonblocking(true)?;
 
-        return Ok(UnixChan { addr: None, stream: conn } )
+        return Ok(UnixChan { addr: None, stream: conn, phantom: PhantomData } )
     }
 }

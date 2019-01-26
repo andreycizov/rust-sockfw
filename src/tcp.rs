@@ -1,28 +1,38 @@
 use mio::tcp::TcpListener as MioTcpListener;
 use std::io::{Error, ErrorKind};
 use mio::tcp::TcpStream;
-use crate::{Listener, PendingChannel, Channel, FwError, Transition};
+use crate::{Listener, PendingChannel, Channel, FwError, Transition, Pollable};
 use std::io::{Read, Write};
 use std::net::SocketAddr;
+use std::marker::PhantomData;
 
 type TcpErr = Error;
 
 
-struct TcpChan {
+pub struct TcpChan<'a> {
     addr: String,
-    stream: TcpStream
+    stream: TcpStream,
+    phantom: PhantomData<&'a TcpStream>
 }
 
-impl PendingChannel for TcpChan {
-    type Err = TcpErr;
-    type C = TcpChan;
-
-    fn try_channel(self) -> Result<Transition<Self::Err, Self::C, Self>, FwError<Self::Err>> {
-        return Ok(Transition::Ok(TcpChan { addr: self.addr, stream: self.stream }));
+impl <'a>Pollable<'a> for TcpChan<'a> {
+    type E = TcpStream;
+    fn pollable(&'a self) -> &'a Self::E {
+        &self.stream
     }
 }
 
-impl Channel for TcpChan {
+
+impl <'a>PendingChannel<'a> for TcpChan<'a> {
+    type Err = TcpErr;
+    type C = TcpChan<'a>;
+
+    fn try_channel(self) -> Result<Transition<'a, Self::Err, Self::C, Self>, FwError<Self::Err>> {
+        return Ok(Transition::Ok(TcpChan { addr: self.addr, stream: self.stream, phantom: PhantomData }));
+    }
+}
+
+impl <'a>Channel<'a> for TcpChan<'a> {
     type Err = TcpErr;
     fn send(&mut self, buff: &mut [u8]) -> Result<usize, FwError<Self::Err>> {
         Ok(self.stream.write(buff)?)
@@ -43,24 +53,33 @@ impl Channel for TcpChan {
     }
 }
 
-struct TcpListener {
-    listener: MioTcpListener
+pub struct TcpListener<'a> {
+    listener: MioTcpListener,
+    phantom: PhantomData<&'a MioTcpListener>
 }
 
-impl TcpListener {
+impl <'a>TcpListener<'a> {
     pub fn bind(addr: &SocketAddr) -> Result<Self, Error> {
         Ok(TcpListener {
-            listener: MioTcpListener::bind(addr)?
+            listener: MioTcpListener::bind(addr)?,
+            phantom: PhantomData,
         })
     }
 }
 
-impl Listener for TcpListener {
-    type Err = TcpErr;
-    type C = TcpChan;
-    type PC = TcpChan;
+impl <'a>Pollable<'a> for TcpListener<'a> {
+    type E = MioTcpListener;
+    fn pollable(&'a self) -> & Self::E {
+        &self.listener
+    }
+}
 
-    fn accept(&mut self) -> Result<Option<Self::PC>, FwError<Self::Err>> {
+impl <'a>Listener<'a> for TcpListener<'a> {
+    type Err = TcpErr;
+    type C = TcpChan<'a>;
+    type PC = TcpChan<'a>;
+
+    fn accept<'b>(&'b mut self) -> Result<Option<Self::PC>, FwError<Self::Err>> {
         if let Some((sock, addr)) = {
             match self.listener.accept() {
                 Err(x) => match x.kind() {
@@ -79,7 +98,8 @@ impl Listener for TcpListener {
                 Some(
                     TcpChan {
                         addr: addr.to_string(),
-                        stream: sock
+                        stream: sock,
+                        phantom: PhantomData
                     }
                 )
             );

@@ -1,17 +1,3 @@
-use mio::tcp::TcpListener;
-use std::net::SocketAddr;
-use mio::{Poll, Token, Ready, PollOpt, Events};
-use mio::unix::EventedFd;
-use std::os::unix::net::UnixStream;
-use std::os::unix::io::AsRawFd;
-use mio::tcp::TcpStream;
-use std::collections::HashMap;
-use std::io::{Read, Write};
-use std::io::{Error as IOError, ErrorKind};
-use std::fmt::{Debug, Error as FmtError, Formatter};
-use mio::Evented;
-
-
 
 //
 //fn get(maps: &mut MAP, idx: usize) -> Result<&mut CK, FWError> {
@@ -100,8 +86,24 @@ use mio::Evented;
 // 2. Sending
 
 use sockfw::*;
+use std::net::SocketAddr;
 
 fn main() {
+    let listener = tcp::TcpListener::bind(
+        &"0.0.0.0:8443".parse::<SocketAddr>().unwrap()
+    ).unwrap();
+
+    let connector = unix::UnixConnector::new(
+        "/var/run/docker.sock"
+    );
+
+    Fw::new(
+        listener,
+        connector,
+        1024,
+        2048,
+        4096
+    ).run();
 //    let buffer_size = 4096;
 //
 //    let addr_out = "/var/run/docker.sock";
