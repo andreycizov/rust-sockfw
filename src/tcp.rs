@@ -4,10 +4,7 @@ use mio::tcp::TcpStream;
 use crate::{Listener, PendingChannel, Channel, FwError, Transition, Pollable};
 use std::io::{Read, Write};
 use std::net::SocketAddr;
-use mio::Poll;
-use mio::Token;
-use mio::Ready;
-use mio::PollOpt;
+use mio::{Poll, Token, Ready, PollOpt};
 
 type TcpErr = Error;
 
