@@ -19,6 +19,7 @@ pub enum FwError<E: Debug> {
     IO(E),
     Disconnected,
     Lost,
+    Custom(usize),
 }
 
 impl<E: Debug> From<E> for FwError<E> {
@@ -79,6 +80,20 @@ pub enum State<
     Active(A),
 }
 
+impl<
+    P: Evented, E: Debug,
+    A: Channel<Err=E> + Pollable<E=P>,
+    B: PendingChannel<Err=E, C=A> + Pollable<E=P>
+>
+State<P, E, A, B> {
+    pub fn is_active(&self) -> bool {
+        match &self {
+            State::Active(_) => true,
+            State::Pending(_) => false,
+        }
+    }
+}
+
 #[derive(Debug)]
 struct Pair<
     EL: Evented,
@@ -109,12 +124,12 @@ pub struct Fw<
 >
 {
     poll: Poll,
-    events: Events,
     listener: LL,
     connector: SS,
     conns: HashMap<usize, Pair<EL, ES, Le, Lc, Lp, Se, Sc, Sp>>,
     next_conn_id: usize,
 
+    event_buffer_size: usize,
     client_buffer_size: usize,
 }
 
@@ -132,17 +147,29 @@ Fw<EL, ES, Le, Lc, Lp, Se, Sc, Sp, LL, SS> {
         listener: LL,
         connector: SS,
         capacity: usize,
+        event_buffer_size: usize,
         client_buffer_size: usize,
     ) -> Result<Self, IOError> {
         Ok(Fw {
             poll: Poll::new()?,
-            events: Events::with_capacity(capacity),
             listener,
             connector,
             conns: HashMap::<usize, Pair<EL, ES, Le, Lc, Lp, Se, Sc, Sp>>::with_capacity(capacity),
             next_conn_id: 1,
+            event_buffer_size,
             client_buffer_size,
         })
+    }
+
+    fn get(&mut self, idx: usize) -> Result<&mut Pair<EL, ES, Le, Lc, Lp, Se, Sc, Sp>, FwError<Le>> {
+        Ok(self.conns.get_mut(&idx).ok_or(FwError::Lost)?)
+    }
+
+    fn tok_to_conn(tok_idx: usize) -> (usize, bool) {
+        let is_l = tok_idx % 2 == 0;
+        let idx = tok_idx / 2;
+
+        (idx, is_l)
     }
 
     fn create_conn_idents(&mut self) -> (usize, usize, usize) {
@@ -158,15 +185,15 @@ Fw<EL, ES, Le, Lc, Lp, Se, Sc, Sp, LL, SS> {
         B: PendingChannel<Err=E, C=A> + Pollable<E=P>
     >(st: &mut State<P, E, A, B>) -> Result<bool, FwError<E>> {
         match &st {
-            State::Pending(x) => {
-                match &x.try_channel()? {
+            State::Pending(ref x) => {
+                match x.try_channel()? {
                     Transition::Stay(x) => {
-                        *st = State::Pending(*x);
-                        return Ok(false)
+                        *st = State::Pending(x);
+                        return Ok(false);
                     }
                     Transition::Ok(x) => {
-                        *st = State::Active(*x);
-                        return Ok(true)
+                        *st = State::Active(x);
+                        return Ok(true);
                     }
                 }
             }
@@ -176,44 +203,69 @@ Fw<EL, ES, Le, Lc, Lp, Se, Sc, Sp, LL, SS> {
         }
     }
 
-    fn check_status(pair: &mut Pair<EL, ES, Le, Lc, Lp, Se, Sc, Sp>) {
+    fn check_status(&mut self, pair: &mut Pair<EL, ES, Le, Lc, Lp, Se, Sc, Sp>) {
         // disable and enable channel polls for now for now.
     }
 
+    fn accept(&mut self) -> Result<(), FwError<Le>> {
+        if let Some(chan_l) = self.listener.accept()? {
+            let chan_s = self.connector.connect().map_err(|_| FwError::Custom(0))?;
+            let (conn_id, tok_a, tok_b) = self.create_conn_idents();
+
+            self.poll.register(chan_l.pollable(), Token(tok_a), Ready::all(), PollOpt::edge()).unwrap();
+            self.poll.register(chan_s.pollable(), Token(tok_b), Ready::all(), PollOpt::edge()).unwrap();
+
+            let mut pair = Pair {
+                ca: State::Pending(chan_l),
+                cb: State::Pending(chan_s),
+                b: vec![0; self.client_buffer_size],
+                tx: 0,
+                rx: 0,
+                tok_a,
+                tok_b,
+            };
+
+            let fa = Self::try_proceed(&mut pair.ca)?;
+
+            let fb = Self::try_proceed(&mut pair.cb).map_err(|_| FwError::Custom(2))?;
+
+            if fa || fb {
+                self.check_status(&mut pair);
+            }
+
+            self.conns.insert(conn_id.clone(), pair);
+        }
+        Ok(())
+    }
+
     pub fn run(&mut self) {
-        self.poll.register(&self.listener.pollable(), Token(0), Ready::all(), PollOpt::level()).unwrap();
+        self.poll.register(self.listener.pollable(), Token(0), Ready::all(), PollOpt::level()).unwrap();
+
+        let mut events = Events::with_capacity(self.event_buffer_size);
 
         loop {
-            self.poll.poll(&mut self.events, None).unwrap();
+            self.poll.poll(&mut events, None).unwrap();
 
-            for event in &self.events {
+            for event in &events {
                 match event.token() {
                     Token(0) => {
-                        let accept = self.listener.accept();
-                        if let Ok(Some(chan_l)) = accept {
-                            if let Ok(chan_s) = self.connector.connect() {
-                                let (conn_id, tok_a, tok_b) = self.create_conn_idents();
+                        if let Err(x) = self.accept() {
+                            dbg!(x);
+                        }
+                    }
+                    Token(idx) => {
+                        let (conn_idx, is_a) = Self::tok_to_conn(idx);
 
-                                self.poll.register(&chan_l.pollable(), Token(tok_a), Ready::all(), PollOpt::edge()).unwrap();
-                                self.poll.register(&chan_s.pollable(), Token(tok_b), Ready::all(), PollOpt::edge()).unwrap();
-
-                                let pair = Pair {
-                                    ca: State::Pending(chan_l),
-                                    cb: State::Pending(chan_s),
-                                    b: vec![0; self.client_buffer_size],
-                                    tx: 0,
-                                    rx: 0,
-                                    tok_a: tok_a,
-                                    tok_b: tok_b,
-                                };
-
-                                Self::try_proceed(&mut pair.ca).unwrap();
-                                Self::try_proceed(&mut pair.cb).unwrap();
-
-                                self.conns.insert(conn_id.clone(), pair);
+                        let pair = match self.get(conn_idx) {
+                            Ok(x) => x,
+                            Err(err) => {
+                                dbg!(err);
+                                continue;
                             }
-                        } else if let Err(err) = accept {
-                            dbg!(err);
+                        };
+
+                        if is_a && !pair.ca.is_active() {
+                            Self::try_proceed(&mut pair.ca);
                         }
                     }
                 }
