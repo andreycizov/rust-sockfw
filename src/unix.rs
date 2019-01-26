@@ -5,6 +5,10 @@ use crate::{FwError, PendingChannel, Channel, Connector, Transition, Pollable};
 use mio::unix::EventedFd;
 use std::os::unix::io::AsRawFd;
 use std::marker::PhantomData;
+use mio::Token;
+use mio::Poll;
+use mio::Ready;
+use mio::PollOpt;
 
 type UnixErr = Error;
 
@@ -13,11 +17,13 @@ pub struct UnixChan {
     stream: UnixStream,
 }
 
-impl<'a> Pollable<'a> for UnixChan {
-    type E = EventedFd<'a>;
+impl Pollable for UnixChan {
+    fn register(&self, poll: &Poll, tok: usize) -> Result<(), Error> {
+        poll.register(&EventedFd(&self.stream.as_raw_fd()), Token(tok), Ready::all(), PollOpt::edge())
+    }
 
-    fn pollable<'b>(&'a self) -> &'b Self::E {
-        &EventedFd(&self.stream.as_raw_fd())
+    fn deregister(&self, poll: &Poll) -> Result<(), Error> {
+        poll.deregister(&EventedFd(&self.stream.as_raw_fd()))
     }
 }
 
@@ -70,6 +76,6 @@ impl Connector for UnixConnector {
         let conn = UnixStream::connect(&self.addr)?;
         conn.set_nonblocking(true)?;
 
-        return Ok(UnixChan { addr: None, stream: conn, phantom: PhantomData });
+        return Ok(UnixChan { addr: None, stream: conn });
     }
 }

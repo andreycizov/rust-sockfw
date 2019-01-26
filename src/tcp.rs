@@ -4,7 +4,10 @@ use mio::tcp::TcpStream;
 use crate::{Listener, PendingChannel, Channel, FwError, Transition, Pollable};
 use std::io::{Read, Write};
 use std::net::SocketAddr;
-use std::marker::PhantomData;
+use mio::Poll;
+use mio::Token;
+use mio::Ready;
+use mio::PollOpt;
 
 type TcpErr = Error;
 
@@ -14,10 +17,13 @@ pub struct TcpChan {
     stream: TcpStream,
 }
 
-impl <'a>Pollable<'a> for TcpChan {
-    type E = TcpStream;
-    fn pollable<'b>(&'a self) -> &'b Self::E {
-        &self.stream
+impl Pollable for TcpChan {
+    fn register(&self, poll: &Poll, tok: usize) -> Result<(), Error> {
+        poll.register(&self.stream, Token(tok), Ready::all(), PollOpt::edge())
+    }
+
+    fn deregister(&self, poll: &Poll) -> Result<(), Error>  {
+        poll.deregister(&self.stream)
     }
 }
 
@@ -27,7 +33,7 @@ impl PendingChannel for TcpChan {
     type C = TcpChan;
 
     fn try_channel(self) -> Result<Transition<Self::Err, Self::C, Self>, FwError<Self::Err>> {
-        return Ok(Transition::Ok(TcpChan { addr: self.addr, stream: self.stream, phantom: PhantomData }));
+        return Ok(Transition::Ok(TcpChan { addr: self.addr, stream: self.stream }));
     }
 }
 
@@ -60,15 +66,17 @@ impl TcpListener{
     pub fn bind(addr: &SocketAddr) -> Result<Self, Error> {
         Ok(TcpListener {
             listener: MioTcpListener::bind(addr)?,
-            phantom: PhantomData,
         })
     }
 }
 
-impl <'a>Pollable<'a> for TcpListener {
-    type E = MioTcpListener;
-    fn pollable<'b>(&'a self) -> &'b Self::E {
-        &self.listener
+impl Pollable for TcpListener {
+    fn register(&self, poll: &Poll, tok: usize) -> Result<(), Error>  {
+        poll.register(&self.listener, Token(tok), Ready::all(), PollOpt::level())
+    }
+
+    fn deregister(&self, poll: &Poll) -> Result<(), Error>  {
+        poll.deregister(&self.listener)
     }
 }
 
@@ -97,7 +105,6 @@ impl Listener for TcpListener {
                     TcpChan {
                         addr: addr.to_string(),
                         stream: sock,
-                        phantom: PhantomData
                     }
                 )
             );

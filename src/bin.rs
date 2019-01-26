@@ -103,7 +103,7 @@ fn main() {
         1024,
         2048,
         4096
-    ).run();
+    ).unwrap().run();
 //    let buffer_size = 4096;
 //
 //    let addr_out = "/var/run/docker.sock";
