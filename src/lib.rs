@@ -11,6 +11,7 @@ mod tests;
 
 pub mod tcp;
 pub mod unix;
+pub mod ssl;
 
 #[derive(Debug)]
 pub enum FwError<E: Debug> {
