@@ -12,6 +12,7 @@ use mio::PollOpt;
 type UnixErr = Error;
 
 pub struct UnixChan {
+    #[allow(dead_code)]
     addr: Option<String>,
     stream: UnixStream,
 }
@@ -71,7 +72,7 @@ impl Connector for UnixConnector {
     type C = UnixChan;
     type PC = UnixChan;
 
-    fn connect<'b>(&'b mut self) -> Result<Self::PC, FwError<Self::Err>> {
+    fn connect(&mut self) -> Result<Self::PC, FwError<Self::Err>> {
         let conn = UnixStream::connect(&self.addr)?;
         conn.set_nonblocking(true)?;
 

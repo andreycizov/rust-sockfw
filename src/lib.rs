@@ -307,8 +307,8 @@ Fw<Le, Lc, Lp, Se, Sc, Sp, LL, SS> {
             let chan_s = self.connector.connect().map_err(FwPairError::ms)?;
             let (conn_id, tok_a, tok_b) = self.create_conn_idents();
 
-            let mut ca = State::Pending(chan_l);
-            let mut cb = State::Pending(chan_s);
+            let ca = State::Pending(chan_l);
+            let cb = State::Pending(chan_s);
 
             ca.register(&self.poll, tok_a).map_err(|x| FwPairError::L(FwError::Register(x)))?;
             cb.register(&self.poll, tok_b).map_err(|x| FwPairError::S(FwError::Register(x)))?;
@@ -382,24 +382,10 @@ Fw<Le, Lc, Lp, Se, Sc, Sp, LL, SS> {
 
         let actives = pair.actives();
 
-        dbg!(actives);
-
-        if actives == 2 {
-            if is_a {
-                Self::handle_rw(
-                    &mut pair.b,
-                    pair.ca.chan(),
-                    pair.cb.chan(),
-                )?;
-            } else {
-                Self::handle_rw(
-                    &mut pair.b,
-                    pair.cb.chan(),
-                    pair.ca.chan(),
-                ).map_err(|x| x.swap())?;
-            }
-
-        } else {
+        if actives < 2{
+            // todo we may receive two events from the same Events but to the same channel
+            // todo one could think we'd need to keep the status of the channels active
+            // todo but we already change activity flag in try_proceed
             if is_a && !pair.ca.is_active() {
                 let f = Self::try_proceed(&mut pair.ca).map_err(FwPairError::ml)?;
 
@@ -427,6 +413,23 @@ Fw<Le, Lc, Lp, Se, Sc, Sp, LL, SS> {
             } {
                 dbg!((is_a, pair.ca.is_active(), pair.cb.is_active()));
             }
+        }
+
+        if pair.actives() == 2 {
+            if is_a {
+                Self::handle_rw(
+                    &mut pair.b,
+                    pair.ca.chan(),
+                    pair.cb.chan(),
+                )?;
+            } else {
+                Self::handle_rw(
+                    &mut pair.b,
+                    pair.cb.chan(),
+                    pair.ca.chan(),
+                ).map_err(|x| x.swap())?;
+            }
+
         }
 
         Ok(())

@@ -22,7 +22,7 @@ impl Pollable for TcpChan {
         poll.register(&self.stream, Token(tok), Ready::all(), PollOpt::edge())
     }
 
-    fn deregister(&self, poll: &Poll) -> Result<(), Error>  {
+    fn deregister(&self, poll: &Poll) -> Result<(), Error> {
         poll.deregister(&self.stream)
     }
 }
@@ -58,11 +58,11 @@ impl Channel for TcpChan {
     }
 }
 
-pub struct TcpListener{
+pub struct TcpListener {
     listener: MioTcpListener,
 }
 
-impl TcpListener{
+impl TcpListener {
     pub fn bind(addr: &SocketAddr) -> Result<Self, Error> {
         Ok(TcpListener {
             listener: MioTcpListener::bind(addr)?,
@@ -71,11 +71,11 @@ impl TcpListener{
 }
 
 impl Pollable for TcpListener {
-    fn register(&self, poll: &Poll, tok: usize) -> Result<(), Error>  {
+    fn register(&self, poll: &Poll, tok: usize) -> Result<(), Error> {
         poll.register(&self.listener, Token(tok), Ready::all(), PollOpt::level())
     }
 
-    fn deregister(&self, poll: &Poll) -> Result<(), Error>  {
+    fn deregister(&self, poll: &Poll) -> Result<(), Error> {
         poll.deregister(&self.listener)
     }
 }
@@ -85,7 +85,7 @@ impl Listener for TcpListener {
     type C = TcpChan;
     type PC = TcpChan;
 
-    fn accept<'b>(&'b mut self) -> Result<Option<Self::PC>, FwError<Self::Err>> {
+    fn accept(&mut self) -> Result<Option<Self::PC>, FwError<Self::Err>> {
         if let Some((sock, addr)) = {
             match self.listener.accept() {
                 Err(x) => match x.kind() {
