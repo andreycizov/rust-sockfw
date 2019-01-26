@@ -39,7 +39,7 @@ impl PendingChannel for TcpChan {
 
 impl Channel for TcpChan {
     type Err = TcpErr;
-    fn send(&mut self, buff: &mut [u8]) -> Result<usize, FwError<Self::Err>> {
+    fn send(&mut self, buff: &[u8]) -> Result<usize, FwError<Self::Err>> {
         Ok(self.stream.write(buff)?)
     }
 

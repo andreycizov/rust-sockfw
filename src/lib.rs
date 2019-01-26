@@ -1,6 +1,5 @@
 use mio::Poll;
 use mio::Events;
-use mio::Evented;
 use std::collections::HashMap;
 use std::io::Error as IOError;
 use mio::Token;
@@ -52,11 +51,20 @@ impl<Le: Debug, Se: Debug> FwPairError<Le, Se> {
     pub fn s(x: Se) -> Self {
         FwPairError::S(FwError::IO(x))
     }
+
+    pub fn swap(self) -> FwPairError<Se, Le> {
+        match self {
+            FwPairError::L(x) => FwPairError::S(x),
+            FwPairError::S(x) => FwPairError::L(x),
+            FwPairError::Disconnected => FwPairError::Disconnected,
+            FwPairError::Lost => FwPairError::Lost,
+        }
+    }
 }
 
 pub trait Channel {
     type Err: Debug;
-    fn send(&mut self, buff: &mut [u8]) -> Result<usize, FwError<Self::Err>>;
+    fn send(&mut self, buff: &[u8]) -> Result<usize, FwError<Self::Err>>;
     fn recv(&mut self, buff: &mut [u8]) -> Result<Option<usize>, FwError<Self::Err>>;
 }
 
@@ -120,6 +128,13 @@ State<E, A, B> {
             State::Swapping => unreachable!("must never happen"),
         }
     }
+
+    pub fn chan(&mut self) -> &mut impl Channel<Err=E> {
+        match self {
+            State::Active(x) => x,
+            _=> unreachable!("must never happen"),
+        }
+    }
 }
 
 
@@ -156,6 +171,7 @@ struct Pair<
     Sc: Channel<Err=Se> + Pollable,
     Sp: PendingChannel<C=Sc, Err=Se> + Pollable
 > {
+    conn_id: usize,
     ca: State<Le, Lc, Lp>,
     cb: State<Se, Sc, Sp>,
     tx: usize,
@@ -175,7 +191,7 @@ impl
     Sp: PendingChannel<C=Sc, Err=Se> + Pollable
 >
 Pair<Le, Lc, Lp, Se, Sc, Sp> {
-    pub fn is_active(&self) -> bool {
+    pub fn actives(&self) -> usize {
         let mut i = 0;
 
         if self.ca.is_active() {
@@ -186,7 +202,7 @@ Pair<Le, Lc, Lp, Se, Sc, Sp> {
             i += 1;
         }
 
-        return i <= 1;
+        return i
     }
 }
 
@@ -233,10 +249,10 @@ Fw<Le, Lc, Lp, Se, Sc, Sp, LL, SS> {
         })
     }
 
-    fn get<'a>(
-        conns: &'a mut HashMap<usize, Pair<Le, Lc, Lp, Se, Sc, Sp>>,
+    fn get(
+        conns: &mut HashMap<usize, Pair<Le, Lc, Lp, Se, Sc, Sp>>,
         idx: usize) ->
-        Result<&'a mut Pair<Le, Lc, Lp, Se, Sc, Sp>, FwPairError<Le, Se>> {
+        Result<&mut Pair<Le, Lc, Lp, Se, Sc, Sp>, FwPairError<Le, Se>> {
 
         Ok(conns.get_mut(&idx).ok_or(FwPairError::Lost)?)
     }
@@ -286,18 +302,39 @@ Fw<Le, Lc, Lp, Se, Sc, Sp, LL, SS> {
         }
     }
 
-    fn check_status(&mut self, pair: &Pair<Le, Lc, Lp, Se, Sc, Sp>) {
-        // disable and enable channel polls for now for now.
-    }
-
     fn accept(&mut self) -> Result<(), FwPairError<Le, Se>> {
         if let Some(chan_l) = self.listener.accept().map_err(FwPairError::ml)? {
             let chan_s = self.connector.connect().map_err(FwPairError::ms)?;
             let (conn_id, tok_a, tok_b) = self.create_conn_idents();
 
+            let mut ca = State::Pending(chan_l);
+            let mut cb = State::Pending(chan_s);
+
+            ca.register(&self.poll, tok_a).map_err(|x| FwPairError::L(FwError::Register(x)))?;
+            cb.register(&self.poll, tok_b).map_err(|x| FwPairError::S(FwError::Register(x)))?;
+
+            //let fa = Self::try_proceed(&mut ca).map_err(FwPairError::ml)?;
+            //let fb = Self::try_proceed(&mut cb).map_err(FwPairError::ms)?;
+
+            dbg!(conn_id);
+//
+//            if fa || fb {
+//                if !fb {
+//                    ca.deregister(&self.poll).map_err(|x| FwPairError::L(FwError::Register(x)))?;
+//                }
+//                if !fa {
+//                    cb.deregister(&self.poll).map_err(|x| FwPairError::S(FwError::Register(x)))?;
+//                }
+//
+//                if fa && fb {
+//
+//                }
+//            }
+
             let pair = Pair {
-                ca: State::Pending(chan_l),
-                cb: State::Pending(chan_s),
+                conn_id: conn_id.clone(),
+                ca,
+                cb,
                 b: vec![0; self.client_buffer_size],
                 tx: 0,
                 rx: 0,
@@ -306,47 +343,97 @@ Fw<Le, Lc, Lp, Se, Sc, Sp, LL, SS> {
             };
 
             self.conns.insert(conn_id.clone(), pair);
-
-            let mut pair = Self::get(&mut self.conns, conn_id)?;
-            {
-                pair.ca.register(&self.poll, tok_a).map_err(|x| FwPairError::L(FwError::Register(x)))?;
-                pair.cb.register(&self.poll, tok_b).map_err(|x| FwPairError::S(FwError::Register(x)))?;
-            }
-
-
-            let fa = Self::try_proceed(&mut pair.ca).map_err(FwPairError::ml)?;
-            let fb = Self::try_proceed(&mut pair.cb).map_err(FwPairError::ms)?;
-
-            if fa || fb {
-                //self.check_status(&pair);
-            }
         }
         Ok(())
     }
 
+    fn handle_once <Re: Debug, We: Debug, R: Channel<Err=Re>, W: Channel<Err=We>>
+    (buff: &mut [u8], chan_a: &mut R, chan_b: &mut W) -> Result<Option<usize>, FwPairError<Re, We>> {
+        let read = chan_a.recv(buff).map_err(FwPairError::ml)?;
+
+        if let Some(x) = read {
+            if x > 0 {
+                chan_b.send(&buff[..x]).map_err(FwPairError::ms)?;
+            } else {
+                return Err(FwPairError::Disconnected);
+            }
+        };
+
+        dbg!(read);
+
+        Ok(read)
+    }
+
+    fn handle_rw <Re: Debug, We: Debug, R: Channel<Err=Re>, W: Channel<Err=We>>
+    (buff: &mut [u8], chan_a: &mut R, chan_b: &mut W) -> Result<Option<usize>, FwPairError<Re, We>> {
+        let mut total = 0;
+        while let Some(x) = Self::handle_once(buff, chan_a, chan_b)? {
+
+            total += x;
+        }
+
+        Ok(Some(total))
+    }
 
     fn polled(&mut self, idx: usize) -> Result<(), FwPairError<Le, Se>> {
         let (conn_idx, is_a) = Self::tok_to_conn(idx);
 
         let pair = Self::get(&mut self.conns, conn_idx)?;
 
-        if is_a && !pair.ca.is_active() {
-            let fa = Self::try_proceed(&mut pair.ca).map_err(FwPairError::ml)?;
+        let actives = pair.actives();
 
-            if fa && !pair.is_active() {
-                //self.poll.deregister()
+        dbg!(actives);
+
+        if actives == 2 {
+            if is_a {
+                Self::handle_rw(
+                    &mut pair.b,
+                    pair.ca.chan(),
+                    pair.cb.chan(),
+                )?;
+            } else {
+                Self::handle_rw(
+                    &mut pair.b,
+                    pair.cb.chan(),
+                    pair.ca.chan(),
+                ).map_err(|x| x.swap())?;
             }
-        }
 
-        if !is_a && !pair.cb.is_active() {
-            Self::try_proceed(&mut pair.cb).map_err(FwPairError::<Le, Se>::ms);
+        } else {
+            if is_a && !pair.ca.is_active() {
+                let f = Self::try_proceed(&mut pair.ca).map_err(FwPairError::ml)?;
+
+                if f {
+                    if actives == 1 {
+                        pair.cb.register(&self.poll, pair.tok_b).map_err(|x| FwPairError::L(FwError::Register(x)))?;
+                        dbg!("enabling S");
+                    } else {
+                        pair.ca.deregister(&self.poll).map_err(|x| FwPairError::L(FwError::Register(x)))?;
+                        dbg!("pausing L as S not ready");
+                    }
+                }
+            } else if !is_a && !pair.cb.is_active() {
+                let f = Self::try_proceed(&mut pair.cb).map_err(FwPairError::ms)?;
+
+                if f {
+                    if actives == 1 {
+                        pair.ca.register(&self.poll, pair.tok_a).map_err(|x| FwPairError::S(FwError::Register(x)))?;
+                        dbg!("enabling L");
+                    } else {
+                        pair.cb.deregister(&self.poll).map_err(|x| FwPairError::S(FwError::Register(x)))?;
+                        dbg!("pausing S as L not ready");
+                    }
+                }
+            } {
+                dbg!((is_a, pair.ca.is_active(), pair.cb.is_active()));
+            }
         }
 
         Ok(())
     }
 
     pub fn run(&mut self) {
-        self.listener.register(&self.poll, 0);
+        self.listener.register(&self.poll, 0).unwrap();
 
         let mut events = Events::with_capacity(self.event_buffer_size);
 

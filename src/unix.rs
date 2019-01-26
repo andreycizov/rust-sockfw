@@ -4,7 +4,6 @@ use std::os::unix::net::UnixStream;
 use crate::{FwError, PendingChannel, Channel, Connector, Transition, Pollable};
 use mio::unix::EventedFd;
 use std::os::unix::io::AsRawFd;
-use std::marker::PhantomData;
 use mio::Token;
 use mio::Poll;
 use mio::Ready;
@@ -38,7 +37,7 @@ impl PendingChannel for UnixChan {
 
 impl Channel for UnixChan {
     type Err = UnixErr;
-    fn send(&mut self, buff: &mut [u8]) -> Result<usize, FwError<Self::Err>> {
+    fn send(&mut self, buff: &[u8]) -> Result<usize, FwError<Self::Err>> {
         Ok(self.stream.write(buff)?)
     }
 
