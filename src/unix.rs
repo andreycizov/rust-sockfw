@@ -8,30 +8,29 @@ use std::marker::PhantomData;
 
 type UnixErr = Error;
 
-pub struct UnixChan<'a> {
+pub struct UnixChan {
     addr: Option<String>,
     stream: UnixStream,
-    phantom: PhantomData<&'a UnixStream>
 }
 
-impl <'a>Pollable<'a> for UnixChan<'a> {
+impl<'a> Pollable<'a> for UnixChan {
     type E = EventedFd<'a>;
 
-    fn pollable(&'a self) -> &'a Self::E {
+    fn pollable<'b>(&'a self) -> &'b Self::E {
         &EventedFd(&self.stream.as_raw_fd())
     }
 }
 
-impl <'a>PendingChannel<'a> for UnixChan<'a> {
+impl PendingChannel for UnixChan {
     type Err = UnixErr;
-    type C = UnixChan<'a>;
+    type C = UnixChan;
 
-    fn try_channel(self) -> Result<Transition<'a, Self::Err, Self::C, Self>, FwError<Self::Err>> {
+    fn try_channel(self) -> Result<Transition<Self::Err, Self::C, Self>, FwError<Self::Err>> {
         return Ok(Transition::Ok(self));
     }
 }
 
-impl <'a>Channel<'a> for UnixChan<'a> {
+impl Channel for UnixChan {
     type Err = UnixErr;
     fn send(&mut self, buff: &mut [u8]) -> Result<usize, FwError<Self::Err>> {
         Ok(self.stream.write(buff)?)
@@ -62,15 +61,15 @@ impl UnixConnector {
     }
 }
 
-impl <'a>Connector<'a> for UnixConnector {
+impl Connector for UnixConnector {
     type Err = UnixErr;
-    type C = UnixChan<'a>;
-    type PC = UnixChan<'a>;
+    type C = UnixChan;
+    type PC = UnixChan;
 
     fn connect<'b>(&'b mut self) -> Result<Self::PC, FwError<Self::Err>> {
         let conn = UnixStream::connect(&self.addr)?;
         conn.set_nonblocking(true)?;
 
-        return Ok(UnixChan { addr: None, stream: conn, phantom: PhantomData } )
+        return Ok(UnixChan { addr: None, stream: conn, phantom: PhantomData });
     }
 }

@@ -56,45 +56,44 @@ impl<Le: Debug, Se: Debug> FwPairError<Le, Se> {
     }
 }
 
-pub trait Channel<'a> {
+pub trait Channel {
     type Err: Debug;
-    fn send(&'a mut self, buff: &mut [u8]) -> Result<usize, FwError<Self::Err>>;
-    fn recv(&'a mut self, buff: &mut [u8]) -> Result<Option<usize>, FwError<Self::Err>>;
+    fn send(&mut self, buff: &mut [u8]) -> Result<usize, FwError<Self::Err>>;
+    fn recv(&mut self, buff: &mut [u8]) -> Result<Option<usize>, FwError<Self::Err>>;
 }
 
 pub trait Pollable<'a> {
     type E: Evented;
     /// return a pollable instance to put into `Poll` instance
-    fn pollable(&'a self) -> &'a Self::E;
+    fn pollable<'b>(&'a self) -> &'b Self::E;
 }
 
-pub enum Transition<'a, Err: Debug, C: Channel<'a, Err=Err>, PC: PendingChannel<'a, Err=Err, C=C>> {
+pub enum Transition<Err: Debug, C: Channel<Err=Err>, PC: PendingChannel<Err=Err, C=C>> {
     Ok(C),
     Stay(PC),
-    _Hidden(PhantomData<&'a usize>),
 }
 
 /// This channel is still initializing
-pub trait PendingChannel<'a> {
+pub trait PendingChannel{
     type Err: Debug;
-    type C: Channel<'a, Err=Self::Err>;
+    type C: Channel<Err=Self::Err>;
 
-    fn try_channel(self) -> Result<Transition<'a, Self::Err, Self::C, Self>, FwError<Self::Err>>
+    fn try_channel(self) -> Result<Transition<Self::Err, Self::C, Self>, FwError<Self::Err>>
         where Self: std::marker::Sized;
 }
 
-pub trait Listener<'a> {
+pub trait Listener {
     type Err: Debug;
-    type C: Channel<'a, Err=Self::Err>;
-    type PC: PendingChannel<'a, Err=Self::Err, C=Self::C>;
+    type C: Channel<Err=Self::Err>;
+    type PC: PendingChannel<Err=Self::Err, C=Self::C>;
     /// accept a single connection and return it
     fn accept<'b>(&'b mut self) -> Result<Option<Self::PC>, FwError<Self::Err>>;
 }
 
-pub trait Connector<'a> {
+pub trait Connector {
     type Err: Debug;
-    type C: Channel<'a, Err=Self::Err>;
-    type PC: PendingChannel<'a, C=Self::C, Err=Self::Err>;
+    type C: Channel<Err=Self::Err>;
+    type PC: PendingChannel< C=Self::C, Err=Self::Err>;
     /// create a single connection and return it
     fn connect<'b>(&'b mut self) -> Result<Self::PC, FwError<Self::Err>>;
 }
@@ -103,8 +102,8 @@ pub trait Connector<'a> {
 pub enum State<
     'a,
     P: Evented, E: Debug,
-    A: Channel<'a, Err=E> + Pollable<'a, E=P>,
-    B: PendingChannel<'a, Err=E, C=A> + Pollable<'a, E=P>
+    A: Channel<Err=E> + Pollable<'a, E=P>,
+    B: PendingChannel<Err=E, C=A> + Pollable<'a, E=P>
 > {
     Pending(B),
     Active(A),
@@ -115,8 +114,8 @@ pub enum State<
 impl<
     'a,
     P: Evented, E: Debug,
-    A: Channel<'a, Err=E> + Pollable<'a, E=P>,
-    B: PendingChannel<'a, Err=E, C=A> + Pollable<'a, E=P>
+    A: Channel<Err=E> + Pollable<'a, E=P>,
+    B: PendingChannel<Err=E, C=A> + Pollable<'a, E=P>
 >
 State<'a, P, E, A, B> {
     pub fn is_active(&self) -> bool {
@@ -133,14 +132,14 @@ State<'a, P, E, A, B> {
 impl<
     'a,
     P: Evented, E: Debug,
-    A: Channel<'a, Err=E> + Pollable<'a, E=P>,
-    B: PendingChannel<'a, Err=E, C=A> + Pollable<'a, E=P>
+    A: Channel<Err=E> + Pollable<'a, E=P>,
+    B: PendingChannel<Err=E, C=A> + Pollable<'a, E=P>
 >
 Pollable<'a> for
 State<'a, P, E, A, B> {
     type E = P;
 
-    fn pollable(&'a self) -> &'a Self::E {
+    fn pollable<'b>(&'a self) -> &'b Self::E {
         match self {
             State::Active(x) => x.pollable(),
             State::Pending(x) => x.pollable(),
@@ -155,11 +154,11 @@ struct Pair<
     EL: Evented,
     ES: Evented,
     Le: Debug,
-    Lc: Channel<'a, Err=Le> + Pollable<'a, E=EL>,
-    Lp: PendingChannel<'a, C=Lc, Err=Le> + Pollable<'a, E=EL>,
+    Lc: Channel<Err=Le> + Pollable<'a, E=EL>,
+    Lp: PendingChannel<C=Lc, Err=Le> + Pollable<'a, E=EL>,
     Se: Debug,
-    Sc: Channel<'a, Err=Se> + Pollable<'a, E=ES>,
-    Sp: PendingChannel<'a, C=Sc, Err=Se> + Pollable<'a, E=ES>
+    Sc: Channel<Err=Se> + Pollable<'a, E=ES>,
+    Sp: PendingChannel<C=Sc, Err=Se> + Pollable<'a, E=ES>
 > {
     ca: State<'a, EL, Le, Lc, Lp>,
     cb: State<'a, ES, Se, Sc, Sp>,
@@ -177,11 +176,11 @@ impl
     EL: Evented,
     ES: Evented,
     Le: Debug,
-    Lc: Channel<'a, Err=Le> + Pollable<'a, E=EL>,
-    Lp: PendingChannel<'a, C=Lc, Err=Le> + Pollable<'a, E=EL>,
+    Lc: Channel<Err=Le> + Pollable<'a, E=EL>,
+    Lp: PendingChannel<C=Lc, Err=Le> + Pollable<'a, E=EL>,
     Se: Debug,
-    Sc: Channel<'a, Err=Se> + Pollable<'a, E=ES>,
-    Sp: PendingChannel<'a, C=Sc, Err=Se> + Pollable<'a, E=ES>
+    Sc: Channel<Err=Se> + Pollable<'a, E=ES>,
+    Sp: PendingChannel<C=Sc, Err=Se> + Pollable<'a, E=ES>
 >
 Pair<'a, EL, ES, Le, Lc, Lp, Se, Sc, Sp> {
     pub fn is_active(&self) -> bool {
@@ -203,10 +202,10 @@ pub struct Fw<
     'a,
     EL: Evented,
     ES: Evented,
-    Le: Debug, Lc: Channel<'a, Err=Le> + Pollable<'a, E=EL>, Lp: PendingChannel<'a, C=Lc, Err=Le> + Pollable<'a, E=EL>,
-    Se: Debug, Sc: Channel<'a, Err=Se> + Pollable<'a, E=ES>, Sp: PendingChannel<'a, C=Sc, Err=Se> + Pollable<'a, E=ES>,
-    LL: Listener<'a, C=Lc, PC=Lp, Err=Le> + Pollable<'a, E=EL>,
-    SS: Connector<'a, C=Sc, PC=Sp, Err=Se>,
+    Le: Debug, Lc: Channel<Err=Le> + Pollable<'a, E=EL>, Lp: PendingChannel<C=Lc, Err=Le> + Pollable<'a, E=EL>,
+    Se: Debug, Sc: Channel<Err=Se> + Pollable<'a, E=ES>, Sp: PendingChannel<C=Sc, Err=Se> + Pollable<'a, E=ES>,
+    LL: Listener<C=Lc, PC=Lp, Err=Le> + Pollable<'a, E=EL>,
+    SS: Connector<C=Sc, PC=Sp, Err=Se>,
 >
 {
     listener: LL,
@@ -224,10 +223,10 @@ impl
     'a,
     EL: Evented,
     ES: Evented,
-    Le: Debug, Lc: Channel<'a, Err=Le> + Pollable<'a, E=EL>, Lp: PendingChannel<'a, C=Lc, Err=Le> + Pollable<'a, E=EL>,
-    Se: Debug, Sc: Channel<'a, Err=Se> + Pollable<'a, E=ES>, Sp: PendingChannel<'a, C=Sc, Err=Se> + Pollable<'a, E=ES>,
-    LL: Listener<'a, C=Lc, PC=Lp, Err=Le> + Pollable<'a, E=EL>,
-    SS: Connector<'a, C=Sc, PC=Sp, Err=Se>,
+    Le: Debug, Lc: Channel<Err=Le> + Pollable<'a, E=EL>, Lp: PendingChannel<C=Lc, Err=Le> + Pollable<'a, E=EL>,
+    Se: Debug, Sc: Channel<Err=Se> + Pollable<'a, E=ES>, Sp: PendingChannel<C=Sc, Err=Se> + Pollable<'a, E=ES>,
+    LL: Listener<C=Lc, PC=Lp, Err=Le> + Pollable<'a, E=EL>,
+    SS: Connector<C=Sc, PC=Sp, Err=Se>,
 >
 Fw<'a, EL, ES, Le, Lc, Lp, Se, Sc, Sp, LL, SS> {
     pub fn new(
@@ -269,8 +268,8 @@ Fw<'a, EL, ES, Le, Lc, Lp, Se, Sc, Sp, LL, SS> {
 
     fn try_proceed<
         'b,
-        P: Evented, E: Debug, A: Channel<'b, Err=E> + Pollable<'b, E=P>,
-        B: PendingChannel<'b, Err=E, C=A> + Pollable<'b, E=P>
+        P: Evented, E: Debug, A: Channel<Err=E> + Pollable<'b, E=P>,
+        B: PendingChannel<Err=E, C=A> + Pollable<'b, E=P>
     >(st: &mut State<'b, P, E, A, B>) -> Result<bool, FwError<E>> {
         let mut prev = State::Swapping;
 
@@ -286,9 +285,6 @@ Fw<'a, EL, ES, Le, Lc, Lp, Se, Sc, Sp, LL, SS> {
                     Transition::Ok(x) => {
                         *st = State::Active(x);
                         return Ok(true);
-                    }
-                    Transition::_Hidden(_) => {
-                        unreachable!("must never happen")
                     }
                 }
             }

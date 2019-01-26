@@ -9,30 +9,29 @@ use std::marker::PhantomData;
 type TcpErr = Error;
 
 
-pub struct TcpChan<'a> {
+pub struct TcpChan {
     addr: String,
     stream: TcpStream,
-    phantom: PhantomData<&'a TcpStream>
 }
 
-impl <'a>Pollable<'a> for TcpChan<'a> {
+impl <'a>Pollable<'a> for TcpChan {
     type E = TcpStream;
-    fn pollable(&'a self) -> &'a Self::E {
+    fn pollable<'b>(&'a self) -> &'b Self::E {
         &self.stream
     }
 }
 
 
-impl <'a>PendingChannel<'a> for TcpChan<'a> {
+impl PendingChannel for TcpChan {
     type Err = TcpErr;
-    type C = TcpChan<'a>;
+    type C = TcpChan;
 
-    fn try_channel(self) -> Result<Transition<'a, Self::Err, Self::C, Self>, FwError<Self::Err>> {
+    fn try_channel(self) -> Result<Transition<Self::Err, Self::C, Self>, FwError<Self::Err>> {
         return Ok(Transition::Ok(TcpChan { addr: self.addr, stream: self.stream, phantom: PhantomData }));
     }
 }
 
-impl <'a>Channel<'a> for TcpChan<'a> {
+impl Channel for TcpChan {
     type Err = TcpErr;
     fn send(&mut self, buff: &mut [u8]) -> Result<usize, FwError<Self::Err>> {
         Ok(self.stream.write(buff)?)
@@ -53,12 +52,11 @@ impl <'a>Channel<'a> for TcpChan<'a> {
     }
 }
 
-pub struct TcpListener<'a> {
+pub struct TcpListener{
     listener: MioTcpListener,
-    phantom: PhantomData<&'a MioTcpListener>
 }
 
-impl <'a>TcpListener<'a> {
+impl TcpListener{
     pub fn bind(addr: &SocketAddr) -> Result<Self, Error> {
         Ok(TcpListener {
             listener: MioTcpListener::bind(addr)?,
@@ -67,17 +65,17 @@ impl <'a>TcpListener<'a> {
     }
 }
 
-impl <'a>Pollable<'a> for TcpListener<'a> {
+impl <'a>Pollable<'a> for TcpListener {
     type E = MioTcpListener;
-    fn pollable(&'a self) -> & Self::E {
+    fn pollable<'b>(&'a self) -> &'b Self::E {
         &self.listener
     }
 }
 
-impl <'a>Listener<'a> for TcpListener<'a> {
+impl Listener for TcpListener {
     type Err = TcpErr;
-    type C = TcpChan<'a>;
-    type PC = TcpChan<'a>;
+    type C = TcpChan;
+    type PC = TcpChan;
 
     fn accept<'b>(&'b mut self) -> Result<Option<Self::PC>, FwError<Self::Err>> {
         if let Some((sock, addr)) = {
