@@ -7,6 +7,7 @@ use mio::Token;
 use mio::Ready;
 use mio::PollOpt;
 use std::fmt::Debug;
+use std::mem;
 
 #[cfg(test)]
 mod tests;
@@ -78,6 +79,7 @@ pub enum State<
 > {
     Pending(B),
     Active(A),
+    Swapping,
 }
 
 impl<
@@ -90,6 +92,7 @@ State<P, E, A, B> {
         match &self {
             State::Active(_) => true,
             State::Pending(_) => false,
+            State::Swapping => unreachable!("must never happen"),
         }
     }
 }
@@ -184,8 +187,12 @@ Fw<EL, ES, Le, Lc, Lp, Se, Sc, Sp, LL, SS> {
         P: Evented, E: Debug, A: Channel<Err=E> + Pollable<E=P>,
         B: PendingChannel<Err=E, C=A> + Pollable<E=P>
     >(st: &mut State<P, E, A, B>) -> Result<bool, FwError<E>> {
-        match &st {
-            State::Pending(ref x) => {
+        let mut prev = State::Swapping;
+
+        mem::swap(&mut prev, st);
+
+        match prev {
+            State::Pending(x) => {
                 match x.try_channel()? {
                     Transition::Stay(x) => {
                         *st = State::Pending(x);
@@ -200,6 +207,10 @@ Fw<EL, ES, Le, Lc, Lp, Se, Sc, Sp, LL, SS> {
             State::Active(_) => {
                 unreachable!("must not call try_proceed on Active channel")
             }
+            State::Swapping => {
+                unreachable!("must never happen")
+            }
+
         }
     }
 
