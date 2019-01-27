@@ -10,6 +10,7 @@ use std::mem;
 mod tests;
 
 pub mod proto;
+pub mod args;
 
 #[derive(Debug)]
 pub enum FwError<E: Debug> {
