@@ -5,7 +5,7 @@ use std::io::Error as IoError;
 use mio::Token;
 use std::fmt::Debug;
 use std::mem;
-use clap::{App, Arg, ArgMatches, SubCommand};
+use clap::{App, Arg, ArgMatches};
 use crate::args::*;
 
 #[derive(Debug)]
