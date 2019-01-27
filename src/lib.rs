@@ -301,11 +301,11 @@ Fw<Le, Lc, Lp, Se, Sc, Sp, LL, SS> {
                 match x.try_channel()? {
                     NextState::Pending(x) => {
                         *st = State::Pending(x);
-                        return Ok(false);
+                        Ok(false)
                     }
                     NextState::Active(x) => {
                         *st = State::Active(x);
-                        return Ok(true);
+                        Ok(true)
                     }
                 }
             }
@@ -328,24 +328,6 @@ Fw<Le, Lc, Lp, Se, Sc, Sp, LL, SS> {
 
             ca.register(&self.poll, tok_a).map_err(|x| FwPairError::L(FwError::Register(x)))?;
             cb.register(&self.poll, tok_b).map_err(|x| FwPairError::S(FwError::Register(x)))?;
-
-            //let fa = Self::try_proceed(&mut ca).map_err(FwPairError::ml)?;
-            //let fb = Self::try_proceed(&mut cb).map_err(FwPairError::ms)?;
-
-            dbg!(conn_id);
-//
-//            if fa || fb {
-//                if !fb {
-//                    ca.deregister(&self.poll).map_err(|x| FwPairError::L(FwError::Register(x)))?;
-//                }
-//                if !fa {
-//                    cb.deregister(&self.poll).map_err(|x| FwPairError::S(FwError::Register(x)))?;
-//                }
-//
-//                if fa && fb {
-//
-//                }
-//            }
 
             let pair = Pair {
                 conn_id: conn_id.clone(),
@@ -375,7 +357,7 @@ Fw<Le, Lc, Lp, Se, Sc, Sp, LL, SS> {
             }
         };
 
-        dbg!(read);
+        //dbg!(read);
 
         Ok(read)
     }
@@ -408,10 +390,10 @@ Fw<Le, Lc, Lp, Se, Sc, Sp, LL, SS> {
                 if f {
                     if actives == 1 {
                         pair.cb.register(&self.poll, pair.tok_b).map_err(|x| FwPairError::L(FwError::Register(x)))?;
-                        dbg!("enabling S");
+                        //dbg!("enabling S");
                     } else {
                         pair.ca.deregister(&self.poll).map_err(|x| FwPairError::L(FwError::Register(x)))?;
-                        dbg!("pausing L as S not ready");
+                        //dbg!("pausing L as S not ready");
                     }
                 }
             } else if !is_a && !pair.cb.is_active() {
@@ -420,14 +402,14 @@ Fw<Le, Lc, Lp, Se, Sc, Sp, LL, SS> {
                 if f {
                     if actives == 1 {
                         pair.ca.register(&self.poll, pair.tok_a).map_err(|x| FwPairError::S(FwError::Register(x)))?;
-                        dbg!("enabling L");
+                        //dbg!("enabling L");
                     } else {
                         pair.cb.deregister(&self.poll).map_err(|x| FwPairError::S(FwError::Register(x)))?;
-                        dbg!("pausing S as L not ready");
+                        //dbg!("pausing S as L not ready");
                     }
                 }
             } {
-                dbg!((is_a, pair.ca.is_active(), pair.cb.is_active()));
+                //dbg!((is_a, pair.ca.is_active(), pair.cb.is_active()));
             }
         }
 
@@ -451,10 +433,6 @@ Fw<Le, Lc, Lp, Se, Sc, Sp, LL, SS> {
         Ok(())
     }
 
-//    fn deregister(&mut self, idx: usize) -> Result<(), FwPairError<Lw, Se>> {
-//        self.conns.remove()
-//    }
-
     pub fn run(&mut self) {
         self.listener.register(&self.poll, 0).unwrap();
 
@@ -467,17 +445,39 @@ Fw<Le, Lc, Lp, Se, Sc, Sp, LL, SS> {
                 match event.token() {
                     Token(0) => {
                         if let Err(x) = self.accept() {
-                            dbg!(x);
+                            dbg!(("accept", x));
                         }
                     }
                     Token(idx) => {
-                        if let Err(x) = self.polled(idx) {
-                            // todo deregister the closed socket
-                            dbg!(x);
-
+                        if let Err(err) = self.polled(idx) {
                             let (conn_idx, _) = Self::tok_to_conn(idx);
+                            match err {
+                                FwPairError::Disconnected => {
+                                    match Self::get(&mut self.conns, conn_idx) {
+                                        Ok(pair) => {
+                                            if let Err(err_a) = pair.ca.deregister(&self.poll) {
+                                                dbg!(("err_a", conn_idx, err_a));
+                                            };
 
+                                            if let Err(err_b) = pair.cb.deregister(&self.poll) {
+                                                dbg!(("err_b", conn_idx, err_b));
+                                            };
+                                        },
+                                        Err(fetch_error) => {
+                                            dbg!(("fetch_error", conn_idx, fetch_error));
+                                        }
+                                    };
 
+                                    if self.conns.remove(&conn_idx).is_none() {
+                                        dbg!(("Disconnect", conn_idx, "Already freed"));
+                                    }
+
+                                    dbg!(("Disconnect", conn_idx, self.conns.len()));
+                                }
+                                other_err => {
+                                    dbg!(("other_err", conn_idx, other_err));
+                                }
+                            }
                         }
                     }
                 }

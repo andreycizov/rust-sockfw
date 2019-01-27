@@ -55,6 +55,7 @@ impl From<HandshakeError<TcpStream>> for FwError<SslError> {
 }
 
 pub struct SslChan {
+    #[allow(dead_code)]
     addr: SocketAddr,
     stream: SslStream<TcpStream>,
 }
