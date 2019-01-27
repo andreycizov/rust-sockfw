@@ -9,9 +9,7 @@ use std::mem;
 #[cfg(test)]
 mod tests;
 
-pub mod tcp;
-pub mod unix;
-pub mod ssl;
+pub mod proto;
 
 #[derive(Debug)]
 pub enum FwError<E: Debug> {
