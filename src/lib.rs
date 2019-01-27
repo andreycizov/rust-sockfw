@@ -399,9 +399,9 @@ Fw<Le, Lc, Lp, Se, Sc, Sp, LL, SS> {
         let actives = pair.actives();
 
         if actives < 2{
-            // todo we may receive two events from the same Events but to the same channel
-            // todo one could think we'd need to keep the status of the channels active
-            // todo but we already change activity flag in try_proceed
+            // we may receive two events from the same Events but to the same channel
+            // one could think we'd need to keep the status of the channels active
+            // but we already change activity flag in try_proceed
             if is_a && !pair.ca.is_active() {
                 let f = Self::try_proceed(&mut pair.ca).map_err(FwPairError::ml)?;
 
@@ -451,6 +451,10 @@ Fw<Le, Lc, Lp, Se, Sc, Sp, LL, SS> {
         Ok(())
     }
 
+//    fn deregister(&mut self, idx: usize) -> Result<(), FwPairError<Lw, Se>> {
+//        self.conns.remove()
+//    }
+
     pub fn run(&mut self) {
         self.listener.register(&self.poll, 0).unwrap();
 
@@ -468,7 +472,12 @@ Fw<Le, Lc, Lp, Se, Sc, Sp, LL, SS> {
                     }
                     Token(idx) => {
                         if let Err(x) = self.polled(idx) {
+                            // todo deregister the closed socket
                             dbg!(x);
+
+                            let (conn_idx, _) = Self::tok_to_conn(idx);
+
+
                         }
                     }
                 }

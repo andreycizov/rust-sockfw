@@ -1,6 +1,8 @@
 use std::io::{Error as IoError, ErrorKind, Read, Write};
 use openssl::ssl::{HandshakeError, MidHandshakeSslStream, SslStream, SslAcceptor};
-use openssl::error::Error as OrigSslError;
+use openssl::error::{Error as OrigSslError, ErrorStack};
+use openssl::pkey::{PKey, Private};
+use openssl::x509::X509;
 use mio::tcp::{TcpListener as MioTcpListener, TcpStream};
 use mio::{Poll, Token, Ready, PollOpt};
 
@@ -11,6 +13,7 @@ use std::net::SocketAddr;
 pub enum SslError {
     Io(IoError),
     Ssl(OrigSslError),
+    SslStack(ErrorStack),
     Handshake(HandshakeError<TcpStream>),
 }
 
@@ -19,6 +22,13 @@ impl From<OrigSslError> for SslError {
         SslError::Ssl(x)
     }
 }
+
+impl From<ErrorStack> for SslError {
+    fn from(x: ErrorStack) -> Self {
+        SslError::SslStack(x)
+    }
+}
+
 
 impl From<IoError> for SslError {
     fn from(x: IoError) -> Self {
@@ -57,6 +67,49 @@ pub struct SslMidChan {
 pub struct SslListener {
     listener: MioTcpListener,
     acceptor: SslAcceptor,
+}
+
+impl Pollable for SslChan {
+    fn register(&self, poll: &Poll, tok: usize) -> Result<(), IoError> {
+        poll.register(self.stream.get_ref(), Token(tok), Ready::all(), PollOpt::edge())
+    }
+
+    fn deregister(&self, poll: &Poll) -> Result<(), IoError> {
+        poll.deregister(self.stream.get_ref())
+    }
+}
+
+impl Pollable for SslMidChan {
+    fn register(&self, poll: &Poll, tok: usize) -> Result<(), IoError> {
+        poll.register(self.stream.get_ref(), Token(tok), Ready::all(), PollOpt::edge())
+    }
+
+    fn deregister(&self, poll: &Poll) -> Result<(), IoError> {
+        poll.deregister(self.stream.get_ref())
+    }
+}
+
+impl SslListener {
+    pub fn bind(addr: &SocketAddr, acceptor: SslAcceptor) -> Result<Self, IoError> {
+        Ok(SslListener {
+            listener: MioTcpListener::bind(addr)?,
+            acceptor
+        })
+    }
+
+    pub fn pkey_from_file(file: &mut Read) -> Result<PKey<Private>, SslError> {
+        let mut pkey_bytes = Vec::<u8>::with_capacity(2048);
+        file.read_to_end(&mut pkey_bytes)?;
+        let res = PKey::<Private>::private_key_from_pem(pkey_bytes.as_ref())?;
+        Ok(res)
+    }
+
+    pub fn cert_from_file(file: &mut Read) -> Result<X509, SslError> {
+        let mut pkey_bytes = Vec::<u8>::with_capacity(2048);
+        file.read_to_end(&mut pkey_bytes)?;
+        let res = X509::from_pem(pkey_bytes.as_ref())?;
+        Ok(res)
+    }
 }
 
 impl Chan for SslChan {
