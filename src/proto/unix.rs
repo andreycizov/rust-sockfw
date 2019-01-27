@@ -1,11 +1,35 @@
-use std::io::{Error, ErrorKind, Write, Read};
+use std::io::{Error as IoError, ErrorKind, Write, Read};
 use mio::{Token, Poll, Ready, PollOpt};
 use mio_uds::UnixStream;
-
+use clap::{App, Arg, ArgMatches};
 
 use crate::{FwError, MidChan, Chan, Connector, NextState, Pollable};
+use crate::args::Parsable;
 
-type UnixErr = Error;
+#[derive(Debug)]
+pub enum UnixErr {
+    Io(IoError),
+    Str(String)
+}
+
+impl From<IoError> for UnixErr {
+    fn from(x: IoError) -> Self {
+        UnixErr::Io(x)
+    }
+}
+
+impl From<IoError> for FwError<UnixErr> {
+    fn from(x: IoError) -> Self {
+        FwError::Io(UnixErr::Io(x))
+    }
+}
+
+impl From<&str> for FwError<UnixErr> {
+    fn from(x: &str) -> FwError<UnixErr> {
+        FwError::Io(UnixErr::Str(x.to_string()))
+    }
+}
+
 
 pub struct UnixChan {
     #[allow(dead_code)]
@@ -20,21 +44,21 @@ pub struct MidUnixChan {
 }
 
 impl Pollable for UnixChan {
-    fn register(&self, poll: &Poll, tok: usize) -> Result<(), Error> {
+    fn register(&self, poll: &Poll, tok: usize) -> Result<(), IoError> {
         poll.register(&self.stream, Token(tok), Ready::all(), PollOpt::edge())
     }
 
-    fn deregister(&self, poll: &Poll) -> Result<(), Error> {
+    fn deregister(&self, poll: &Poll) -> Result<(), IoError> {
         poll.deregister(&self.stream)
     }
 }
 
 impl Pollable for MidUnixChan {
-    fn register(&self, poll: &Poll, tok: usize) -> Result<(), Error> {
+    fn register(&self, poll: &Poll, tok: usize) -> Result<(), IoError> {
         poll.register(&self.stream, Token(tok), Ready::all(), PollOpt::edge())
     }
 
-    fn deregister(&self, poll: &Poll) -> Result<(), Error> {
+    fn deregister(&self, poll: &Poll) -> Result<(), IoError> {
         poll.deregister(&self.stream)
     }
 }
@@ -88,5 +112,19 @@ impl Connector for UnixConnector {
         let conn = UnixStream::connect(&self.addr)?;
 
         return Ok(NextState::Pending(MidUnixChan { addr: None, stream: conn }));
+    }
+}
+
+impl Parsable<Result<UnixConnector, FwError<UnixErr>>> for UnixConnector {
+    fn parser<'a, 'b>(app: App<'a, 'b>) -> App<'a, 'b> {
+        app.arg(
+            Arg::with_name("addr")
+                .required(true)
+                .index(1)
+        )
+    }
+    fn parse<'a>(matches: &ArgMatches) -> Result<UnixConnector, FwError<UnixErr>> {
+        let addr = matches.value_of("addr").ok_or("address not found")?;
+        Ok(UnixConnector::new(addr))
     }
 }

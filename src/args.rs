@@ -1,11 +1,11 @@
 use clap::{App, ArgMatches};
 
 
-trait ArgMatchesExt<R> {
+pub trait ArgMatchesExt<R> {
     fn parse(self) -> R;
 }
 
-trait AppExt<R, T: Parsable<R>> {
+pub trait AppExt<R, T: Parsable<R>> {
     fn parser(self) -> Self;
 }
 
@@ -21,9 +21,7 @@ impl<'a, 'b, R, T: Parsable<R>> AppExt<R, T> for App<'a, 'b> {
     }
 }
 
-trait Parsable<R> {
+pub trait Parsable<R> {
     fn parser<'a, 'b>(app: App<'a, 'b>) -> App<'a, 'b>;
     fn parse<'a>(matches: &ArgMatches) -> R;
 }
-
-

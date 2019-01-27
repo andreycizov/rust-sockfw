@@ -1,13 +1,16 @@
 use std::io::{Error as IoError, ErrorKind, Read, Write};
-use openssl::ssl::{HandshakeError, MidHandshakeSslStream, SslStream, SslAcceptor};
+use std::net::SocketAddr;
+use openssl::ssl::{HandshakeError, MidHandshakeSslStream, SslStream, SslAcceptor, SslMethod, SslFiletype};
 use openssl::error::{Error as OrigSslError, ErrorStack};
 use openssl::pkey::{PKey, Private};
 use openssl::x509::X509;
 use mio::tcp::{TcpListener as MioTcpListener, TcpStream};
 use mio::{Poll, Token, Ready, PollOpt};
+use clap::{App, Arg, ArgMatches};
 
 use crate::{Listener, MidChan, Chan, FwError, Pollable, NextState};
-use std::net::SocketAddr;
+use crate::args::Parsable;
+
 
 #[derive(Debug)]
 pub enum SslError {
@@ -15,6 +18,7 @@ pub enum SslError {
     Ssl(OrigSslError),
     SslStack(ErrorStack),
     Handshake(HandshakeError<TcpStream>),
+    Str(String),
 }
 
 impl From<OrigSslError> for SslError {
@@ -44,15 +48,28 @@ impl From<HandshakeError<TcpStream>> for SslError {
 
 impl From<IoError> for FwError<SslError> {
     fn from(x: IoError) -> FwError<SslError> {
-        FwError::IO(SslError::Io(x))
+        FwError::Io(SslError::Io(x))
+    }
+}
+
+impl From<ErrorStack> for FwError<SslError> {
+    fn from(x: ErrorStack) -> Self {
+        FwError::Io(SslError::SslStack(x))
     }
 }
 
 impl From<HandshakeError<TcpStream>> for FwError<SslError> {
     fn from(x: HandshakeError<TcpStream>) -> FwError<SslError> {
-        FwError::IO(SslError::Handshake(x))
+        FwError::Io(SslError::Handshake(x))
     }
 }
+
+impl From<&str> for FwError<SslError> {
+    fn from(x: &str) -> FwError<SslError> {
+        FwError::Io(SslError::Str(x.to_string()))
+    }
+}
+
 
 pub struct SslChan {
     #[allow(dead_code)]
@@ -87,29 +104,6 @@ impl Pollable for SslMidChan {
 
     fn deregister(&self, poll: &Poll) -> Result<(), IoError> {
         poll.deregister(self.stream.get_ref())
-    }
-}
-
-impl SslListener {
-    pub fn bind(addr: &SocketAddr, acceptor: SslAcceptor) -> Result<Self, IoError> {
-        Ok(SslListener {
-            listener: MioTcpListener::bind(addr)?,
-            acceptor
-        })
-    }
-
-    pub fn pkey_from_file(file: &mut Read) -> Result<PKey<Private>, SslError> {
-        let mut pkey_bytes = Vec::<u8>::with_capacity(2048);
-        file.read_to_end(&mut pkey_bytes)?;
-        let res = PKey::<Private>::private_key_from_pem(pkey_bytes.as_ref())?;
-        Ok(res)
-    }
-
-    pub fn cert_from_file(file: &mut Read) -> Result<X509, SslError> {
-        let mut pkey_bytes = Vec::<u8>::with_capacity(2048);
-        file.read_to_end(&mut pkey_bytes)?;
-        let res = X509::from_pem(pkey_bytes.as_ref())?;
-        Ok(res)
     }
 }
 
@@ -164,6 +158,29 @@ impl Pollable for SslListener {
     }
 }
 
+impl SslListener {
+    pub fn bind(addr: &SocketAddr, acceptor: SslAcceptor) -> Result<Self, IoError> {
+        Ok(SslListener {
+            listener: MioTcpListener::bind(addr)?,
+            acceptor,
+        })
+    }
+
+    pub fn pkey_from_file(file: &mut Read) -> Result<PKey<Private>, SslError> {
+        let mut pkey_bytes = Vec::<u8>::with_capacity(2048);
+        file.read_to_end(&mut pkey_bytes)?;
+        let res = PKey::<Private>::private_key_from_pem(pkey_bytes.as_ref())?;
+        Ok(res)
+    }
+
+    pub fn cert_from_file(file: &mut Read) -> Result<X509, SslError> {
+        let mut pkey_bytes = Vec::<u8>::with_capacity(2048);
+        file.read_to_end(&mut pkey_bytes)?;
+        let res = X509::from_pem(pkey_bytes.as_ref())?;
+        Ok(res)
+    }
+}
+
 impl Listener for SslListener {
     type Err = SslError;
     type C = SslChan;
@@ -204,5 +221,59 @@ impl Listener for SslListener {
         } else {
             Ok(None)
         }
+    }
+}
+
+pub enum SslParseError {
+    Stack(ErrorStack),
+}
+
+impl Parsable<Result<SslListener, FwError<SslError>>> for SslListener {
+    fn parser<'a, 'b>(app: App<'a, 'b>) -> App<'a, 'b> {
+        app
+            .arg(
+                Arg::with_name("addr")
+                    .required(true)
+                    .index(1)
+            )
+            .arg(
+                Arg::with_name("ca")
+                    .required(true)
+                    .index(2)
+            )
+            .arg(
+                Arg::with_name("cert")
+                    .required(true)
+                    .index(3)
+            )
+            .arg(
+                Arg::with_name("privkey")
+                    .required(true)
+                    .index(4)
+            )
+    }
+    fn parse<'a>(matches: &ArgMatches) -> Result<SslListener, FwError<SslError>> {
+        let addr = matches.value_of("addr").ok_or("address not found")?;
+        let ca = matches.value_of("ca").ok_or("ca not found")?;
+        let cert = matches.value_of("cert").ok_or("cert not found")?;
+        let privkey = matches.value_of("privkey").ok_or("privkey not found")?;
+
+        let addr = addr.parse::<SocketAddr>().map_err(|_| "invalid socket address")?;
+
+
+        let mut acceptor = SslAcceptor::mozilla_intermediate(SslMethod::tls())?;
+        acceptor.set_certificate_file(cert, SslFiletype::PEM)?;
+        acceptor.set_private_key_file(privkey, SslFiletype::PEM)?;
+        acceptor.set_ca_file(ca)?;
+        acceptor.check_private_key()?;
+
+        let acceptor = acceptor.build();
+
+        Ok(
+            SslListener::bind(
+                &addr,
+                acceptor,
+            )?
+        )
     }
 }

@@ -5,11 +5,11 @@ authors = ["Andrey Cizov <acizov@gmail.com>"]
 edition = "2018"
 
 [lib]
-name = "sockfw"
+name = "sfw"
 path = "src/lib.rs"
 
 [[bin]]
-name = "sockfwe"
+name = "sfw"
 path = "src/bin.rs"
 
 

@@ -1,37 +1,76 @@
+use clap::{App, SubCommand};
+
 use sockfw::*;
-use std::net::SocketAddr;
-use openssl::ssl::{SslMethod, SslAcceptor};
-use std::fs::OpenOptions;
+use sockfw::args::*;
+
+const TLS: &str = "tls";
+const TCP: &str = "tcp";
+const UNIX: &str = "unix";
+
+fn parser_for_in<'a, 'b>(app: App<'a, 'b>, x: &str) -> App<'a, 'b> {
+    match x {
+        TCP => proto::tcp::TcpListener::parser(app),
+        TLS => proto::ssl::SslListener::parser(app),
+        _ => unreachable!(x)
+    }
+}
+
+fn parser_for_out<'a, 'b>(app: App<'a, 'b>, x: &str) -> App<'a, 'b> {
+    match x {
+        UNIX => proto::unix::UnixConnector::parser(app),
+        _ => unreachable!(x)
+    }
+}
 
 fn main() {
-//    let listener = tcp::TcpListener::bind(
-//        &"0.0.0.0:8443".parse::<SocketAddr>().unwrap()
-//    ).unwrap();
+    let mut app = App::new("universal forwarder")
+        .version("0.1")
+        .author("Andrey Cizov <acizov@gmail.com>");
 
-    let open_read = OpenOptions::new().read(true).clone();
+    app = FwConf::parser(app);
 
-    let mut acceptor = SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
-    acceptor.set_certificate(&proto::ssl::SslListener::cert_from_file(&mut open_read.open("./etc/server.crt").unwrap()).unwrap()).unwrap();
-    acceptor.set_private_key(&proto::ssl::SslListener::pkey_from_file(&mut open_read.open("./etc/server.pem").unwrap()).unwrap()).unwrap();
-    acceptor.set_ca_file("./etc/ca.crt").unwrap();
-    acceptor.check_private_key().unwrap();
+    for in_name in vec![TCP, TLS] {
+        let mut sc = SubCommand::with_name(in_name);
 
-    let acceptor = acceptor.build();
+        sc = parser_for_in(sc, in_name);
 
-    let listener = proto::ssl::SslListener::bind(
-        &"0.0.0.0:8443".parse::<SocketAddr>().unwrap(),
-        acceptor
-    ).unwrap();
+        for out_name in vec![UNIX] {
+            let mut sco = SubCommand::with_name(out_name);
 
-    let connector = proto::unix::UnixConnector::new(
-        "/var/run/docker.sock"
-    );
+            sco = parser_for_out(sco, out_name);
 
-    Fw::new(
-        listener,
-        connector,
-        1024,
-        2048,
-        4096
-    ).unwrap().run();
+            sc = sc.subcommand(sco);
+        }
+
+        app = app.subcommand(sc);
+    }
+
+    let matches = app.get_matches();
+
+    let conf = FwConf::parse(&matches).unwrap();
+
+    if let Some(matches) = matches.subcommand_matches(TCP) {
+        let c_i = proto::tcp::TcpListener::parse(matches).unwrap();
+
+        if let Some(matches) = matches.subcommand_matches(UNIX) {
+            let c_o = proto::unix::UnixConnector::parse(matches).unwrap();
+
+            Fw::from_conf(&conf, c_i, c_o).unwrap().run();
+        } else {
+            unreachable!();
+        }
+    } else if let Some(matches) = matches.subcommand_matches(TLS) {
+        let c_i = proto::ssl::SslListener::parse(matches).unwrap();
+
+        if let Some(matches) = matches.subcommand_matches(UNIX) {
+            let c_o = proto::unix::UnixConnector::parse(matches).unwrap();
+
+            Fw::from_conf(&conf, c_i, c_o).unwrap().run();
+        } else {
+            unreachable!();
+        }
+    } else {
+        eprintln!("invalid command {:?}", matches);
+        ::std::process::exit(-1);
+    }
 }

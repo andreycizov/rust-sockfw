@@ -1,11 +1,35 @@
 use mio::tcp::{TcpListener as MioTcpListener, TcpStream};
-use std::io::{Error, ErrorKind, Read, Write};
+use std::io::{Error as IoError, ErrorKind, Read, Write};
 use std::net::SocketAddr;
 use mio::{Poll, Token, Ready, PollOpt};
+use clap::{App, Arg, ArgMatches};
+
 use crate::{Listener, MidChan, Chan, FwError, NextState, Pollable};
+use crate::args::Parsable;
 
-type TcpErr = Error;
+#[derive(Debug)]
+pub enum TcpErr {
+    Io(IoError),
+    Str(String),
+}
 
+impl From<IoError> for TcpErr {
+    fn from(x: IoError) -> Self {
+        TcpErr::Io(x)
+    }
+}
+
+impl From<IoError> for FwError<TcpErr> {
+    fn from(x: IoError) -> Self {
+        FwError::Io(TcpErr::Io(x))
+    }
+}
+
+impl From<&str> for FwError<TcpErr> {
+    fn from(x: &str) -> FwError<TcpErr> {
+        FwError::Io(TcpErr::Str(x.to_string()))
+    }
+}
 
 pub struct TcpChan {
     addr: String,
@@ -13,11 +37,11 @@ pub struct TcpChan {
 }
 
 impl Pollable for TcpChan {
-    fn register(&self, poll: &Poll, tok: usize) -> Result<(), Error> {
+    fn register(&self, poll: &Poll, tok: usize) -> Result<(), IoError> {
         poll.register(&self.stream, Token(tok), Ready::all(), PollOpt::edge())
     }
 
-    fn deregister(&self, poll: &Poll) -> Result<(), Error> {
+    fn deregister(&self, poll: &Poll) -> Result<(), IoError> {
         poll.deregister(&self.stream)
     }
 }
@@ -58,7 +82,7 @@ pub struct TcpListener {
 }
 
 impl TcpListener {
-    pub fn bind(addr: &SocketAddr) -> Result<Self, Error> {
+    pub fn bind(addr: &SocketAddr) -> Result<Self, IoError> {
         Ok(TcpListener {
             listener: MioTcpListener::bind(addr)?,
         })
@@ -66,11 +90,11 @@ impl TcpListener {
 }
 
 impl Pollable for TcpListener {
-    fn register(&self, poll: &Poll, tok: usize) -> Result<(), Error> {
+    fn register(&self, poll: &Poll, tok: usize) -> Result<(), IoError> {
         poll.register(&self.listener, Token(tok), Ready::all(), PollOpt::level())
     }
 
-    fn deregister(&self, poll: &Poll) -> Result<(), Error> {
+    fn deregister(&self, poll: &Poll) -> Result<(), IoError> {
         poll.deregister(&self.listener)
     }
 }
@@ -106,5 +130,23 @@ impl Listener for TcpListener {
         } else {
             return Ok(None);
         }
+    }
+}
+
+impl Parsable<Result<TcpListener, FwError<TcpErr>>> for TcpListener {
+    fn parser<'a, 'b>(app: App<'a, 'b>) -> App<'a, 'b> {
+        app.arg(
+            Arg::with_name("addr")
+                .required(true)
+                .index(1)
+        )
+    }
+    fn parse<'a>(matches: &ArgMatches) -> Result<TcpListener, FwError<TcpErr>> {
+        let addr = matches.value_of("addr").ok_or("address not found")?;
+        let addr = addr.parse::<SocketAddr>().map_err(|_| "invalid socket address")?;
+
+        Ok(
+            TcpListener::bind(&addr)?
+        )
     }
 }
