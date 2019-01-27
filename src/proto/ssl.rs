@@ -10,6 +10,7 @@ use clap::{App, Arg, ArgMatches};
 
 use crate::{Listener, MidChan, Chan, FwError, Pollable, NextState};
 use crate::args::Parsable;
+use crate::proto::common::StreamConf;
 
 
 #[derive(Debug)]
@@ -85,6 +86,7 @@ pub struct SslMidChan {
 pub struct SslListener {
     listener: MioTcpListener,
     acceptor: SslAcceptor,
+    conf: StreamConf
 }
 
 impl Pollable for SslChan {
@@ -159,10 +161,11 @@ impl Pollable for SslListener {
 }
 
 impl SslListener {
-    pub fn bind(addr: &SocketAddr, acceptor: SslAcceptor) -> Result<Self, IoError> {
+    pub fn bind(addr: &SocketAddr, acceptor: SslAcceptor, conf: StreamConf) -> Result<Self, IoError> {
         Ok(SslListener {
             listener: MioTcpListener::bind(addr)?,
             acceptor,
+            conf,
         })
     }
 
@@ -199,7 +202,9 @@ impl Listener for SslListener {
             }?
         } {
             stream.set_nodelay(true)?;
-            stream.set_linger(None)?;
+
+            stream.set_keepalive(self.conf.keepalive)?;
+            stream.set_linger(self.conf.linger)?;
 
             let chan = match self.acceptor.accept(stream) {
                 Ok(x) => Ok(
@@ -230,7 +235,7 @@ pub enum SslParseError {
 
 impl Parsable<Result<SslListener, FwError<SslError>>> for SslListener {
     fn parser<'a, 'b>(app: App<'a, 'b>) -> App<'a, 'b> {
-        app
+        let app = app
             .arg(
                 Arg::with_name("addr")
                     .required(true)
@@ -250,7 +255,8 @@ impl Parsable<Result<SslListener, FwError<SslError>>> for SslListener {
                 Arg::with_name("privkey")
                     .required(true)
                     .index(4)
-            )
+            );
+        StreamConf::parser(app)
     }
     fn parse<'a>(matches: &ArgMatches) -> Result<SslListener, FwError<SslError>> {
         let addr = matches.value_of("addr").ok_or("address not found")?;
@@ -260,6 +266,7 @@ impl Parsable<Result<SslListener, FwError<SslError>>> for SslListener {
 
         let addr = addr.parse::<SocketAddr>().map_err(|_| "invalid socket address")?;
 
+        let conf = StreamConf::parse(&matches)?;
 
         let mut acceptor = SslAcceptor::mozilla_intermediate(SslMethod::tls())?;
         acceptor.set_certificate_file(cert, SslFiletype::PEM)?;
@@ -273,6 +280,7 @@ impl Parsable<Result<SslListener, FwError<SslError>>> for SslListener {
             SslListener::bind(
                 &addr,
                 acceptor,
+                conf,
             )?
         )
     }

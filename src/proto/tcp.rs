@@ -6,6 +6,7 @@ use clap::{App, Arg, ArgMatches};
 
 use crate::{Listener, MidChan, Chan, FwError, NextState, Pollable};
 use crate::args::Parsable;
+use crate::proto::common::StreamConf;
 
 #[derive(Debug)]
 pub enum TcpErr {
@@ -79,12 +80,17 @@ impl Chan for TcpChan {
 
 pub struct TcpListener {
     listener: MioTcpListener,
+    conf: StreamConf,
 }
 
 impl TcpListener {
-    pub fn bind(addr: &SocketAddr) -> Result<Self, IoError> {
+    pub fn bind(
+        addr: &SocketAddr,
+        conf: &StreamConf,
+    ) -> Result<Self, IoError> {
         Ok(TcpListener {
             listener: MioTcpListener::bind(addr)?,
+            conf: conf.clone()
         })
     }
 }
@@ -117,7 +123,9 @@ impl Listener for TcpListener {
             }?
         } {
             sock.set_nodelay(true)?;
-            sock.set_linger(None)?;
+
+            sock.set_keepalive(self.conf.keepalive)?;
+            sock.set_linger(self.conf.linger)?;
 
             return Ok(
                 Some(
@@ -135,18 +143,28 @@ impl Listener for TcpListener {
 
 impl Parsable<Result<TcpListener, FwError<TcpErr>>> for TcpListener {
     fn parser<'a, 'b>(app: App<'a, 'b>) -> App<'a, 'b> {
-        app.arg(
-            Arg::with_name("addr")
-                .required(true)
-                .index(1)
-        )
+        let app = app
+            .arg(
+                Arg::with_name("addr")
+                    .required(true)
+                    .index(1)
+            );
+
+        StreamConf::parser(app)
     }
-    fn parse<'a>(matches: &ArgMatches) -> Result<TcpListener, FwError<TcpErr>> {
+
+
+    fn parse(matches: &ArgMatches) -> Result<TcpListener, FwError<TcpErr>> {
         let addr = matches.value_of("addr").ok_or("address not found")?;
         let addr = addr.parse::<SocketAddr>().map_err(|_| "invalid socket address")?;
 
+        let conf = StreamConf::parse(&matches)?;
+
         Ok(
-            TcpListener::bind(&addr)?
+            TcpListener::bind(
+                &addr,
+                &conf
+            )?
         )
     }
 }

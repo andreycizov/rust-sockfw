@@ -23,5 +23,5 @@ impl<'a, 'b, R, T: Parsable<R>> AppExt<R, T> for App<'a, 'b> {
 
 pub trait Parsable<R> {
     fn parser<'a, 'b>(app: App<'a, 'b>) -> App<'a, 'b>;
-    fn parse<'a>(matches: &ArgMatches) -> R;
+    fn parse(matches: &ArgMatches) -> R;
 }

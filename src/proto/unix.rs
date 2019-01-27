@@ -123,7 +123,7 @@ impl Parsable<Result<UnixConnector, FwError<UnixErr>>> for UnixConnector {
                 .index(1)
         )
     }
-    fn parse<'a>(matches: &ArgMatches) -> Result<UnixConnector, FwError<UnixErr>> {
+    fn parse(matches: &ArgMatches) -> Result<UnixConnector, FwError<UnixErr>> {
         let addr = matches.value_of("addr").ok_or("address not found")?;
         Ok(UnixConnector::new(addr))
     }
