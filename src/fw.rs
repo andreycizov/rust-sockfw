@@ -151,7 +151,7 @@ State<E, A, B> {
     pub fn chan(&mut self) -> &mut impl Chan<Err=E> {
         match self {
             State::Active(x) => x,
-            _=> unreachable!("must never happen"),
+            _=> unreachable!("must never happen 1"),
         }
     }
 }
@@ -178,7 +178,7 @@ State<E, A, B> {
         return match self {
             State::Active(x) => x.register(&poll, tok),
             State::Pending(x) => x.register(&poll, tok),
-            _ => unreachable!("must never happen"),
+            _ => unreachable!("must never happen 2"),
         };
     }
 
@@ -186,7 +186,7 @@ State<E, A, B> {
         return match self {
             State::Active(x) => x.deregister(&poll),
             State::Pending(x) => x.deregister(&poll),
-            _ => unreachable!("must never happen"),
+            _ => unreachable!("must never happen 3"),
         };
     }
 }
@@ -337,7 +337,7 @@ Fw<Le, Lc, Lp, Se, Sc, Sp, LL, SS> {
                 unreachable!("must not call try_proceed on Active channel")
             }
             State::Swapping => {
-                unreachable!("must never happen")
+                unreachable!("must never happen 4")
             }
         }
     }
