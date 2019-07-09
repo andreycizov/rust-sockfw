@@ -67,7 +67,7 @@ impl MidChan for MidUnixChan {
     type Err = UnixErr;
     type C = UnixChan;
 
-    fn try_channel(self) -> Result<NextState<Self::Err, Self::C, Self>, FwError<Self::Err>> {
+    fn try_channel(self, _poll: &Poll) -> Result<NextState<Self::Err, Self::C, Self>, FwError<Self::Err>> {
         return Ok(NextState::Active(UnixChan { addr: self.addr, stream: self.stream }));
     }
 }

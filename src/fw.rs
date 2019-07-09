@@ -3,7 +3,7 @@ use mio::Events;
 use std::collections::HashMap;
 use std::io::Error as IoError;
 use mio::Token;
-use std::fmt::Debug;
+use std::fmt::{Debug, Formatter, Result as FmtResult};
 use std::mem;
 use clap::{App, Arg, ArgMatches};
 use crate::args::*;
@@ -41,7 +41,6 @@ pub enum NextState<
     Active(A),
 }
 
-#[derive(Debug)]
 pub enum State<
     E: Debug,
     A: Chan<Err=E> + Pollable,
@@ -50,6 +49,24 @@ pub enum State<
     Pending(B),
     Active(A),
     Swapping,
+    Lost,
+}
+
+impl<
+    E: Debug,
+    A: Chan<Err=E> + Pollable,
+    B: MidChan<Err=E, C=A> + Pollable
+> Debug for State<E, A, B> {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        let s = match &self {
+            State::Pending(_) => "Pending",
+            State::Active(_) => "Active",
+            State::Swapping => "Swapping",
+            State::Lost => "Lost",
+        };
+
+        write!(f, "({})", s)
+    }
 }
 
 #[derive(Debug)]
@@ -113,7 +130,7 @@ pub trait MidChan {
     type Err: Debug;
     type C: Chan<Err=Self::Err>;
 
-    fn try_channel(self) -> Result<NextState<Self::Err, Self::C, Self>, FwError<Self::Err>>
+    fn try_channel(self, poll: &Poll) -> Result<NextState<Self::Err, Self::C, Self>, FwError<Self::Err>>
         where Self: std::marker::Sized;
 }
 
@@ -144,6 +161,7 @@ State<E, A, B> {
         match &self {
             State::Active(_) => true,
             State::Pending(_) => false,
+            State::Lost => false,
             State::Swapping => unreachable!("must never happen"),
         }
     }
@@ -178,7 +196,7 @@ State<E, A, B> {
         return match self {
             State::Active(x) => x.register(&poll, tok),
             State::Pending(x) => x.register(&poll, tok),
-            _ => unreachable!("must never happen"),
+            x => unreachable!("{:?}", x),
         };
     }
 
@@ -186,7 +204,8 @@ State<E, A, B> {
         return match self {
             State::Active(x) => x.deregister(&poll),
             State::Pending(x) => x.deregister(&poll),
-            _ => unreachable!("must never happen"),
+            State::Lost => Ok(()),
+            x => unreachable!("{:?}", x),
         };
     }
 }
@@ -315,30 +334,31 @@ Fw<Le, Lc, Lp, Se, Sc, Sp, LL, SS> {
     fn try_proceed<
         E: Debug, A: Chan<Err=E> + Pollable,
         B: MidChan<Err=E, C=A> + Pollable
-    >(st: &mut State<E, A, B>) -> Result<bool, FwError<E>> {
+    >(poll: &Poll, st: &mut State<E, A, B>) -> Result<bool, FwError<E>> {
         let mut prev = State::Swapping;
 
         mem::swap(&mut prev, st);
 
         match prev {
             State::Pending(x) => {
-                match x.try_channel()? {
-                    NextState::Pending(x) => {
-                        *st = State::Pending(x);
-                        Ok(false)
+                match x.try_channel(&poll) {
+                    Ok(x) => match x {
+                        NextState::Pending(x) => {
+                            *st = State::Pending(x);
+                            Ok(false)
+                        }
+                        NextState::Active(x) => {
+                            *st = State::Active(x);
+                            Ok(true)
+                        }
                     }
-                    NextState::Active(x) => {
-                        *st = State::Active(x);
-                        Ok(true)
+                    Err(x) => {
+                        *st = State::Lost;
+                        Err(x)
                     }
                 }
             }
-            State::Active(_) => {
-                unreachable!("must not call try_proceed on Active channel")
-            }
-            State::Swapping => {
-                unreachable!("must never happen")
-            }
+            x => unreachable!("{:?}", x)
         }
     }
 
@@ -404,12 +424,12 @@ Fw<Le, Lc, Lp, Se, Sc, Sp, LL, SS> {
 
         let actives = pair.actives();
 
-        if actives < 2{
+        if actives < 2 {
             // we may receive two events from the same Events but to the same channel
             // one could think we'd need to keep the status of the channels active
             // but we already change activity flag in try_proceed
             if is_a && !pair.ca.is_active() {
-                let f = Self::try_proceed(&mut pair.ca).map_err(FwPairError::ml)?;
+                let f = Self::try_proceed(&self.poll, &mut pair.ca).map_err(FwPairError::ml)?;
 
                 if f {
                     if actives == 1 {
@@ -421,7 +441,7 @@ Fw<Le, Lc, Lp, Se, Sc, Sp, LL, SS> {
                     }
                 }
             } else if !is_a && !pair.cb.is_active() {
-                let f = Self::try_proceed(&mut pair.cb).map_err(FwPairError::ms)?;
+                let f = Self::try_proceed(&self.poll, &mut pair.cb).map_err(FwPairError::ms)?;
 
                 if f {
                     if actives == 1 {
@@ -457,6 +477,29 @@ Fw<Le, Lc, Lp, Se, Sc, Sp, LL, SS> {
         Ok(())
     }
 
+    pub fn free(&mut self, conn_idx: usize) {
+        match Self::get(&mut self.conns, conn_idx) {
+            Ok(pair) => {
+                if let Err(err_a) = pair.ca.deregister(&self.poll) {
+                    dbg!(("err_a", conn_idx, err_a));
+                };
+
+                if let Err(err_b) = pair.cb.deregister(&self.poll) {
+                    dbg!(("err_b", conn_idx, err_b));
+                };
+            },
+            Err(fetch_error) => {
+                dbg!(("fetch_error", conn_idx, fetch_error));
+            }
+        };
+
+        if self.conns.remove(&conn_idx).is_none() {
+            dbg!(("Disconnect", conn_idx, "Already freed"));
+        }
+
+        dbg!(("Disconnect", conn_idx, self.conns.len()));
+    }
+
     pub fn run(&mut self) {
         self.listener.register(&self.poll, 0).unwrap();
 
@@ -477,29 +520,11 @@ Fw<Le, Lc, Lp, Se, Sc, Sp, LL, SS> {
                             let (conn_idx, _) = Self::tok_to_conn(idx);
                             match err {
                                 FwPairError::Disconnected => {
-                                    match Self::get(&mut self.conns, conn_idx) {
-                                        Ok(pair) => {
-                                            if let Err(err_a) = pair.ca.deregister(&self.poll) {
-                                                dbg!(("err_a", conn_idx, err_a));
-                                            };
-
-                                            if let Err(err_b) = pair.cb.deregister(&self.poll) {
-                                                dbg!(("err_b", conn_idx, err_b));
-                                            };
-                                        },
-                                        Err(fetch_error) => {
-                                            dbg!(("fetch_error", conn_idx, fetch_error));
-                                        }
-                                    };
-
-                                    if self.conns.remove(&conn_idx).is_none() {
-                                        dbg!(("Disconnect", conn_idx, "Already freed"));
-                                    }
-
-                                    dbg!(("Disconnect", conn_idx, self.conns.len()));
+                                    self.free(conn_idx);
                                 }
                                 other_err => {
                                     dbg!(("other_err", conn_idx, other_err));
+                                    self.free(conn_idx);
                                 }
                             }
                         }

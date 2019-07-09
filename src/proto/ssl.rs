@@ -78,6 +78,7 @@ pub struct SslChan {
     stream: SslStream<TcpStream>,
 }
 
+#[derive(Debug)]
 pub struct SslMidChan {
     addr: SocketAddr,
     stream: MidHandshakeSslStream<TcpStream>,
@@ -133,7 +134,7 @@ impl MidChan for SslMidChan {
     type Err = SslError;
     type C = SslChan;
 
-    fn try_channel(self) -> Result<NextState<Self::Err, Self::C, Self>, FwError<Self::Err>> {
+    fn try_channel(self, poll: &Poll) -> Result<NextState<Self::Err, Self::C, Self>, FwError<Self::Err>> {
         match self.stream.handshake() {
             Ok(x) => Ok(
                 NextState::Active(
@@ -144,7 +145,13 @@ impl MidChan for SslMidChan {
                 HandshakeError::WouldBlock(mid_stream) => {
                     Ok(NextState::Pending(SslMidChan { addr: self.addr, stream: mid_stream }))
                 }
-                x => Err(x.into())
+                HandshakeError::Failure(mid_stream) => {
+                    poll.deregister(mid_stream.get_ref())?;
+                    Err(HandshakeError::Failure(mid_stream).into())
+                }
+                x => {
+                    Err(x.into())
+                }
             }
         }
     }

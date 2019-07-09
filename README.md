@@ -66,6 +66,10 @@ SUBCOMMANDS:
    unix
 ```
 
+## Known issues
+- This daemon does not do the buffering itself, so sending may fail and thus the connection
+  may be terminated. I haven't yet reached that issue, but this needs to be fixed.
+
 ## License
 
 `sockfw` is licensed under either of

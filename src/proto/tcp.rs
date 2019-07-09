@@ -52,7 +52,7 @@ impl MidChan for TcpChan {
     type Err = TcpErr;
     type C = TcpChan;
 
-    fn try_channel(self) -> Result<NextState<Self::Err, Self::C, Self>, FwError<Self::Err>> {
+    fn try_channel(self, _poll: &Poll) -> Result<NextState<Self::Err, Self::C, Self>, FwError<Self::Err>> {
         return Ok(NextState::Active(TcpChan { addr: self.addr, stream: self.stream }));
     }
 }
