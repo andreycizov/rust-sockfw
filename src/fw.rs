@@ -358,16 +358,7 @@ Fw<Le, Lc, Lp, Se, Sc, Sp, LL, SS> {
                     }
                 }
             }
-<<<<<<< HEAD
             x => unreachable!("{:?}", x)
-=======
-            State::Active(_) => {
-                unreachable!("must not call try_proceed on Active channel")
-            }
-            State::Swapping => {
-                unreachable!("must never happen 4")
-            }
->>>>>>> 560b92304d520d4e1364c8606653681e9a9ef809
         }
     }
 
